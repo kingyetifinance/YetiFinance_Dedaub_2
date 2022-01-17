@@ -18,6 +18,6 @@ contract NonPayable {
     }
 
     receive() external payable {
-        require(isPayable);
+        require(isPayable, "Not payable");
     }
 }

@@ -89,6 +89,16 @@ abstract contract ERC20 is IERC20, Domain {
         return true;
     }
 
+    /// @notice Approves `amount` from sender to be spend by `spender`.
+    /// @param spender Address of the party that can draw from msg.sender's account.
+    /// @param amount The maximum collective amount that `spender` can draw.
+    /// @return (bool) Returns True if approved.
+    function increaseAllowance(address spender, uint256 amount) public override returns (bool) {
+        allowance[msg.sender][spender] += amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
     // solhint-disable-next-line func-name-mixedcase
     function DOMAIN_SEPARATOR() external view returns (bytes32) {
         return _domainSeparator();

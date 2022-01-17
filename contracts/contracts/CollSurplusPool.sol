@@ -8,6 +8,7 @@ import "./Dependencies/SafeMath.sol";
 import "./Dependencies/Ownable.sol";
 import "./Dependencies/CheckContract.sol";
 import "./Dependencies/LiquityBase.sol";
+import "./Interfaces/IWAsset.sol";
 
 
 /**
@@ -19,10 +20,10 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
 
     string public constant NAME = "CollSurplusPool";
 
-    address public borrowerOperationsAddress;
-    address public troveManagerAddress;
-    address public troveManagerRedemptionsAddress;
-    address public activePoolAddress;
+    address internal borrowerOperationsAddress;
+    address internal troveManagerAddress;
+    address internal troveManagerRedemptionsAddress;
+    address internal activePoolAddress;
 
     // deposited collateral tracker. Colls is always the whitelist list of all collateral tokens. Amounts
     newColls internal poolColl;
@@ -52,6 +53,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         checkContract(_troveManagerAddress);
         checkContract(_troveManagerRedemptionsAddress);
         checkContract(_activePoolAddress);
+        checkContract(_whitelistAddress);
 
         borrowerOperationsAddress = _borrowerOperationsAddress;
         troveManagerAddress = _troveManagerAddress;
@@ -99,7 +101,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
      *
      * Returns the amount of a given collateral in state. Not necessarily the contract's actual balance.
      */
-    function getCollateral(address _collateral) public view override returns (uint256) {
+    function getCollateral(address _collateral) external view override returns (uint256) {
         uint256 collateralIndex = whitelist.getIndex(_collateral);
         return poolColl.amounts[collateralIndex];
     }
@@ -108,7 +110,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
      *
      * Returns all collateral balances in state. Not necessarily the contract's actual balances.
      */
-    function getAllCollateral() public view override returns (address[] memory, uint256[] memory) {
+    function getAllCollateral() external view override returns (address[] memory, uint256[] memory) {
         return (poolColl.tokens, poolColl.amounts);
     }
 
@@ -131,7 +133,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         _requireCallerIsBorrowerOperations();
 
         newColls memory claimableColl = balances[_account];
-        require(_CollsIsNonZero(claimableColl), "CollSurplusPool: No collateral available to claim");
+        require(_CollsIsNonZero(claimableColl), "CSP: No collateral available");
 
         balances[_account].amounts = new uint256[](poolColl.tokens.length); // sets balance of account to 0
         emit CollBalanceUpdated(_account);
@@ -140,31 +142,39 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         emit CollateralSent(_account);
 
         bool success = _sendColl(_account, claimableColl);
-        require(success, "CollSurplusPool: sending Collateral failed");
+        require(success, "CSP: sending Collateral failed");
     }
 
     // --- 'require' functions ---
 
     function _requireCallerIsBorrowerOperations() internal view {
-        require(
-            msg.sender == borrowerOperationsAddress,
-            "CollSurplusPool: Caller is not Borrower Operations"
-        );
+        if (
+            msg.sender != borrowerOperationsAddress) {
+            _revertWrongFuncCaller();
+        }
     }
 
     function _requireCallerIsTroveManager() internal view {
-        require(
-            msg.sender == troveManagerAddress || msg.sender == troveManagerRedemptionsAddress,
-            "CollSurplusPool: Caller is not TroveManager"
-        );
+        if (
+            msg.sender != troveManagerAddress && msg.sender != troveManagerRedemptionsAddress) {
+            _revertWrongFuncCaller();
+        }
     }
 
     function _requireCallerIsActivePool() internal view {
-        require(msg.sender == activePoolAddress, "CollSurplusPool: Caller is not Active Pool");
+        if (msg.sender != activePoolAddress) {
+            _revertWrongFuncCaller();
+        }
     }
 
     function _requireCallerIsWhitelist() internal view {
-        require(msg.sender == address(whitelist), "CollSurplusPool: Caller is not Whitelist");
+        if (msg.sender != address(whitelist)) {
+            _revertWrongFuncCaller();
+        }
+    }
+
+    function _revertWrongFuncCaller() internal view{
+        revert("CSP: External caller not allowed");
     }
 
     function receiveCollateral(address[] memory _tokens, uint256[] memory _amounts)
@@ -180,5 +190,25 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         _requireCallerIsWhitelist();
         poolColl.tokens.push(_collateral);
         poolColl.amounts.push(0);
+    }
+
+    // Function to send collateral out to an address, and checks if the asset is wrapped so that it can 
+    // unwrap in that case. 
+    function _sendColl(address _to, newColls memory _colls) internal returns (bool) {
+        uint256 tokensLen = _colls.tokens.length;
+        for (uint256 i; i < tokensLen; ++i) {
+            address token = _colls.tokens[i];
+            if (whitelist.isWrapped(token)) {
+                // Collects rewards automatically for that amount and unwraps for the original borrower. 
+                // CSP actually owns these assets so it transfers it from this contract to the _to param. 
+                IWAsset(token).unwrapFor(_to, _to, _colls.amounts[i]);
+            } else {
+                // Otherwise transfer like normal ERC20
+                if (!IERC20(token).transfer(_to, _colls.amounts[i])) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }

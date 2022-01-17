@@ -50,7 +50,7 @@ import "./Dependencies/CheckContract.sol";
 contract SortedTroves is Ownable, CheckContract, ISortedTroves {
     using SafeMath for uint256;
 
-    string constant public NAME = "SortedTroves";
+    bytes32 constant public NAME = "SortedTroves";
 
     event TroveManagerAddressChanged(address _troveManagerAddress);
     event TroveManagerRedemptionsAddressChanged(address _troveManagerRedemptionsAddress);
@@ -58,9 +58,9 @@ contract SortedTroves is Ownable, CheckContract, ISortedTroves {
     event NodeAdded(address _id, uint _ICR);
     event NodeRemoved(address _id);
 
-    address public borrowerOperationsAddress;
-    address public troveManagerRedemptionsAddress;
-    address public troveManagerAddress;
+    address internal borrowerOperationsAddress;
+    address internal troveManagerRedemptionsAddress;
+    address internal troveManagerAddress;
 
     // Information for a node in the list
     struct Node {
@@ -89,7 +89,7 @@ contract SortedTroves is Ownable, CheckContract, ISortedTroves {
         address _borrowerOperationsAddress,
         address _troveManagerRedemptionsAddress) 
         external override onlyOwner {
-        require(_size > 0, "SortedTroves: Size can’t be zero");
+        require(_size != 0, "SortedTroves: Size can’t be zero");
         checkContract(_troveManagerAddress);
         checkContract(_borrowerOperationsAddress);
         checkContract(_troveManagerRedemptionsAddress);
@@ -124,11 +124,11 @@ contract SortedTroves is Ownable, CheckContract, ISortedTroves {
         // List must not be full
         require(!isFull(), "SortedTroves: List is full");
         // List must not already contain node
-        require(!contains(_id), "SortedTroves: List already contains the node");
+        require(!contains(_id), "SortedTroves: duplicate node");
         // Node id must not be null
         require(_id != address(0), "SortedTroves: Id cannot be zero");
         // ICR must be non-zero
-        require(_ICR > 0, "SortedTroves: ICR must be positive");
+        require(_ICR != 0, "SortedTroves: ICR must be (+)");
         address prevId = _prevId;
         address nextId = _nextId;
         if (!_validInsertPosition(_ICR, prevId, nextId)) {
@@ -178,7 +178,7 @@ contract SortedTroves is Ownable, CheckContract, ISortedTroves {
      */
     function _remove(address _id) internal {
         // List must contain the node
-        require(contains(_id), "SortedTroves: List does not contain the id");
+        require(contains(_id), "SortedTroves: Id not found");
 
         if (data.size > 1) {
             // List contains more than a single node
@@ -225,9 +225,9 @@ contract SortedTroves is Ownable, CheckContract, ISortedTroves {
     function reInsert(address _id, uint256 _newICR, address _prevId, address _nextId) external override {
         _requireCallerIsBOorTroveM();
         // List must contain the node
-        require(contains(_id), "SortedTroves: List does not contain the id");
+        require(contains(_id), "SortedTroves: Id not found");
         // ICR must be non-zero
-        require(_newICR > 0, "SortedTroves: ICR must be positive");
+        require(_newICR != 0, "SortedTroves: ICR must be (+)");
 
         // Remove node from the list
         _remove(_id);
@@ -431,12 +431,19 @@ contract SortedTroves is Ownable, CheckContract, ISortedTroves {
     // --- 'require' functions ---
 
     function _requireCallerIsTroveManager() internal view {
-        require(msg.sender == troveManagerAddress, "SortedTroves: Caller is not the TroveManager");
+        if (msg.sender != troveManagerAddress) {
+            _revertWrongFuncCaller();
+        }
     }
 
     function _requireCallerIsBOorTroveM() internal view {
-        require(msg.sender == borrowerOperationsAddress || msg.sender == troveManagerAddress
-                || msg.sender == troveManagerRedemptionsAddress,
-                "SortedTroves: Caller is neither BO nor TroveM");
+        if (msg.sender != borrowerOperationsAddress && msg.sender != troveManagerAddress
+                && msg.sender != troveManagerRedemptionsAddress) {
+            _revertWrongFuncCaller();
+        }
+    }
+
+    function _revertWrongFuncCaller() internal view{
+        revert("ST: External caller not allowed");
     }
 }

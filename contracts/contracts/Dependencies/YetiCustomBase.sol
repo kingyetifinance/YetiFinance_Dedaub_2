@@ -30,20 +30,23 @@ contract YetiCustomBase is BaseMath {
         newColls memory coll3;
 
         coll3.tokens = whitelist.getValidCollateral();
-        coll3.amounts = new uint256[](coll3.tokens.length);
+        uint256 coll1Len = _coll1.tokens.length;
+        uint256 coll2Len = _coll2.tokens.length;
+        uint256 coll3Len = coll3.tokens.length;
+        coll3.amounts = new uint256[](coll3Len);
 
         uint256 n = 0;
-        for (uint256 i = 0; i < _coll1.tokens.length; i++) {
+        for (uint256 i; i < coll1Len; ++i) {
             uint256 tokenIndex = whitelist.getIndex(_coll1.tokens[i]);
-            if (_coll1.amounts[i] > 0) {
+            if (_coll1.amounts[i] != 0) {
                 n++;
                 coll3.amounts[tokenIndex] = _coll1.amounts[i];
             }
         }
 
-        for (uint256 i = 0; i < _coll2.tokens.length; i++) {
+        for (uint256 i; i < coll2Len; ++i) {
             uint256 tokenIndex = whitelist.getIndex(_coll2.tokens[i]);
-            if (_coll2.amounts[i] > 0) {
+            if (_coll2.amounts[i] != 0) {
                 if (coll3.amounts[tokenIndex] == 0) {
                     n++;
                 }
@@ -53,11 +56,11 @@ contract YetiCustomBase is BaseMath {
 
         address[] memory sumTokens = new address[](n);
         uint256[] memory sumAmounts = new uint256[](n);
-        uint256 j = 0;
+        uint256 j;
 
         // should only find n amounts over 0
-        for (uint256 i = 0; i < coll3.tokens.length; i++) {
-            if (coll3.amounts[i] > 0) {
+        for (uint256 i; i < coll3Len; ++i) {
+            if (coll3.amounts[i] != 0) {
                 sumTokens[j] = coll3.tokens[i];
                 sumAmounts[j] = coll3.amounts[i];
                 j++;
@@ -100,8 +103,9 @@ contract YetiCustomBase is BaseMath {
     ) internal view returns (uint[] memory) {
         uint[] memory sumAmounts = _getArrayCopy(_coll1.amounts);
 
+        uint256 coll1Len = _tokens.length;
         // assumes that sumAmounts length = whitelist tokens length.
-        for (uint256 i = 0; i < _tokens.length; i++) {
+        for (uint256 i; i < coll1Len; ++i) {
             uint tokenIndex = whitelist.getIndex(_tokens[i]);
             sumAmounts[tokenIndex] = sumAmounts[tokenIndex].add(_amounts[i]);
         }
@@ -119,7 +123,8 @@ contract YetiCustomBase is BaseMath {
         uint[] memory diffAmounts = _getArrayCopy(_coll1.amounts);
 
         //assumes that coll1.tokens = whitelist tokens. Keeps all of coll1's tokens, and subtracts coll2's amounts
-        for (uint256 i = 0; i < _subTokens.length; i++) {
+        uint256 subTokensLen = _subTokens.length;
+        for (uint256 i; i < subTokensLen; ++i) {
             uint256 tokenIndex = whitelist.getIndex(_subTokens[i]);
             diffAmounts[tokenIndex] = diffAmounts[tokenIndex].sub(_subAmounts[i]);
         }
@@ -134,25 +139,32 @@ contract YetiCustomBase is BaseMath {
         view
         returns (newColls memory finalColls)
     {
-        require(_tokens.length == _amounts.length, "Sub Colls invalid input");
+        uint256 coll1Len = _coll1.tokens.length;
+        uint256 tokensLen = _tokens.length;
+        require(tokensLen == _amounts.length, "SubColls invalid input");
 
         newColls memory coll3;
         coll3.tokens = whitelist.getValidCollateral();
-        coll3.amounts = new uint256[](coll3.tokens.length);
+        uint256 coll3Len = coll3.tokens.length;
+        coll3.amounts = new uint256[](coll3Len);
         uint256 n = 0;
-
-        for (uint256 i = 0; i < _coll1.tokens.length; i++) {
-            if (_coll1.amounts[i] > 0) {
-                uint256 tokenIndex = whitelist.getIndex(_coll1.tokens[i]);
+        uint256 tokenIndex;
+        uint256 i;
+        for (; i < coll1Len; ++i) {
+            if (_coll1.amounts[i] != 0) {
+                tokenIndex = whitelist.getIndex(_coll1.tokens[i]);
                 coll3.amounts[tokenIndex] = _coll1.amounts[i];
                 n++;
             }
         }
-
-        for (uint256 i = 0; i < _tokens.length; i++) {
-            uint256 tokenIndex = whitelist.getIndex(_tokens[i]);
-            require(coll3.amounts[tokenIndex] >= _amounts[i], "illegal sub");
-            coll3.amounts[tokenIndex] = coll3.amounts[tokenIndex].sub(_amounts[i]);
+        uint256 thisAmounts;
+        tokenIndex = 0;
+        i = 0;
+        for (; i < tokensLen; ++i) {
+            tokenIndex = whitelist.getIndex(_tokens[i]);
+            thisAmounts = _amounts[i];
+            require(coll3.amounts[tokenIndex] >= thisAmounts, "illegal sub");
+            coll3.amounts[tokenIndex] = coll3.amounts[tokenIndex].sub(thisAmounts);
             if (coll3.amounts[tokenIndex] == 0) {
                 n--;
             }
@@ -160,22 +172,27 @@ contract YetiCustomBase is BaseMath {
 
         address[] memory diffTokens = new address[](n);
         uint256[] memory diffAmounts = new uint256[](n);
-        uint256 j = 0;
-
-        for (uint256 i = 0; i < coll3.tokens.length; i++) {
-            if (coll3.amounts[i] > 0) {
-                diffTokens[j] = coll3.tokens[i];
-                diffAmounts[j] = coll3.amounts[i];
-                j++;
+        
+        if (n != 0) {
+            uint j;
+            i = 0;
+            for (; i < coll3Len; ++i) {
+                if (coll3.amounts[i] != 0) {
+                    diffTokens[j] = coll3.tokens[i];
+                    diffAmounts[j] = coll3.amounts[i];
+                    ++j;
+                }
             }
         }
         finalColls.tokens = diffTokens;
         finalColls.amounts = diffAmounts;
+        // returns finalColls;
     }
 
     function _getArrayCopy(uint[] memory _arr) internal pure returns (uint[] memory){
-        uint[] memory copy = new uint[](_arr.length);
-        for (uint i = 0; i < _arr.length; i++) {
+        uint256 arrLen = _arr.length;
+        uint[] memory copy = new uint[](arrLen);
+        for (uint256 i; i < arrLen; ++i) {
             copy[i] = _arr[i];
         }
         return copy;

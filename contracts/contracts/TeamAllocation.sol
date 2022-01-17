@@ -3,12 +3,14 @@
 pragma solidity 0.6.11;
 
 import "./Interfaces/IERC20.sol";
+import "./Dependencies/SafeERC20.sol";
 
 /*
  * Brought to you by @YetiFinance
  * Holds/Distributes Yeti Finance Team Tokens
 */
 contract TeamAllocation {
+    using SafeERC20 for IERC20;
 
     IERC20 YETI;
     address teamWallet;
@@ -20,6 +22,8 @@ contract TeamAllocation {
     bool yetiSet;
 
     uint internal _94_5_thousand = 945e20; // 70% * 27% * 500,000
+
+    event teamAddressUpdated(address newTeamAddress);
 
 
     constructor() public {
@@ -45,11 +49,13 @@ contract TeamAllocation {
         _94_5_thousand * 30,
         _94_5_thousand * 15
         ];
+
+        emit teamAddressUpdated(teamWallet);
     }
 
 
     modifier onlyTeam() {
-        require(msg.sender == teamWallet);
+        require(msg.sender == teamWallet, "Not a team wallet");
         _;
     }
 
@@ -61,25 +67,27 @@ contract TeamAllocation {
 
 
     function sendAllocatedYETI() external {
-        require(yetiSet);
-        require(!allocationClaimed);
-        for (uint i = 0; i < 7; i++) {
+        require(yetiSet, "sendAllocatedYETI: yeti team address not set");
+        require(!allocationClaimed, "sendAllocatedYETI: allocation claimed");
+        for (uint256 i; i < 7; ++i) {
             address member = team[i];
             uint amount = allocations[i];
-            require(YETI.transfer(member, amount));
+            YETI.safeTransfer(member, amount);
         }
         allocationClaimed = true;
     }
 
 
     function sendUnallocatedYETI(address _to, uint _amount) external onlyTeam {
-        require(allocationClaimed);
-        YETI.transfer(_to, _amount);
+        require(allocationClaimed, "sendUnallocatedYETI: allocation already claimed");
+        YETI.safeTransfer(_to, _amount);
     }
 
 
     function updateTeamAddress(address _newTeamWallet) external onlyTeam {
+        require(_newTeamWallet != address(0), "updateTeamAddress: new team wallet cannot be the zero address");
         teamWallet = _newTeamWallet;
+        emit teamAddressUpdated(teamWallet);
     }
 
 

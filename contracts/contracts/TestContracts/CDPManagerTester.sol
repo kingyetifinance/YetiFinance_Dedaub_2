@@ -35,7 +35,7 @@ contract TroveManagerTester is TroveManager {
 
     function unprotectedDecayBaseRateFromBorrowing() external returns (uint) {
         baseRate = calcDecayedBaseRate();
-        assert(baseRate >= 0 && baseRate <= DECIMAL_PRECISION);
+        require(baseRate >= 0 && baseRate <= DECIMAL_PRECISION, "unprotectedDecayBaseRateFromBorrowing: bad baseRate");
         
         _updateLastFeeOpTime();
         return baseRate;
@@ -62,8 +62,8 @@ contract TroveManagerTester is TroveManager {
     }
 
     function callInternalRemoveTroveOwner(address _troveOwner) external {
-        uint troveOwnersArrayLength = TroveOwners.length;
-        _removeTroveOwner(_troveOwner, troveOwnersArrayLength);
+        // uint troveOwnersArrayLength = getTroveOwnersCount();
+        // _removeTroveOwner(_troveOwner, troveOwnersArrayLength);
     }
 
     function getTotalStakes(address _collADdress) external view returns (uint) {
@@ -75,9 +75,9 @@ contract TroveManagerTester is TroveManager {
     }
 
     // _price is no longer used but just useful so we don't have to rewrite test cases
-    function getCurrentICR(address _troveAddress, uint _price) external view returns (uint) {
-        return getCurrentICR(_troveAddress);
-    }
+    // function getCurrentICR(address _troveAddress, uint _price) external view returns (uint) {
+    //     return getCurrentICR(_troveAddress);
+    // }
 
     function getEDC(address _troveAddress) external view returns (address[] memory, uint[] memory, uint) {
         (newColls memory colls, uint YUSDdebt) = _getCurrentTroveState(_troveAddress);
@@ -107,6 +107,17 @@ contract TroveManagerTester is TroveManager {
         coll.tokens = _tokens;
         coll.amounts = _amounts;
         return _getUSDColls(coll);
+    }
+
+    // Return the amount of collateral to be drawn from a trove's collateral and sent as gas compensation.
+    function _getCollGasCompensation(newColls memory _coll) internal pure returns (newColls memory) {
+        require(_coll.tokens.length == _coll.amounts.length, "Not same length");
+
+        uint[] memory amounts = new uint[](_coll.tokens.length);
+        for (uint256 i; i < _coll.tokens.length; ++i) {
+            amounts[i] = _coll.amounts[i] / PERCENT_DIVISOR;
+        }
+        return newColls(_coll.tokens, amounts);
     }
 
 }

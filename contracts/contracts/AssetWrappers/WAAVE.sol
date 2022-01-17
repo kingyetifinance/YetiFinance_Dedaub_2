@@ -14,14 +14,14 @@ contract WAAVE is ERC20_8, IWAsset {
     IERC20 public aToken;
     // uint public _poolPid;
 
-    address public activePool;
-    address public TML;
-    address public TMR;
-    address public defaultPool;
-    address public stabilityPool;
-    address public YetiFinanceTreasury;
+    address internal activePool;
+    address internal TML;
+    address internal TMR;
+    address internal defaultPool;
+    address internal stabilityPool;
+    address internal YetiFinanceTreasury;
     uint public SHAREOFFSET=1e12;
-    bool addressesSet;
+    bool internal addressesSet;
 
     struct UserInfo {
         uint256 amount; // How many LP tokens the user has provided.
@@ -36,11 +36,6 @@ contract WAAVE is ERC20_8, IWAsset {
 
     // Info of each user that stakes LP tokens.
     mapping(address => UserInfo) userInfo;
-
-    // Types of minting
-    mapping(uint => address) mintType;
-
-
 
 
     /* ========== INITIALIZER ========== */
@@ -87,7 +82,7 @@ contract WAAVE is ERC20_8, IWAsset {
     // to mint WAssets which it sends to _to. It also updates
     // _rewardOwner's reward tracking such that it now has the right to
     // future yields from the newly minted WAssets
-    function wrap(uint _amount, address _to) external override{
+    function wrap(uint _amount, address _from, address _to, address _rewardRecipient) external override {
         
         _mint(_to, 1e18*_amount/aavePerShare());
         aToken.transferFrom(msg.sender, address(this), _amount);
@@ -97,17 +92,15 @@ contract WAAVE is ERC20_8, IWAsset {
 
     function aavePerShare() public view returns (uint) {
         if (_totalSupply==0) {
-            return 1;
+            return 1e18;
         }
         return 1e18*aToken.balanceOf(address(this))/_totalSupply;
     }
 
     function unwrap(uint _amount) external override {
-        _burn(msg.sender, _amount);
         aToken.transfer(msg.sender, _amount*aavePerShare()/1e18);
+        _burn(msg.sender, _amount);
     }
-
-   
 
 
     // Only callable by ActivePool or StabilityPool
@@ -117,7 +110,7 @@ contract WAAVE is ERC20_8, IWAsset {
     // In both cases, the wrapped asset is first sent to the liquidator or redeemer respectively,
     // then this function is called with _for equal to the the liquidator or redeemer address
     // Prior to this being called, the user whose assets we are burning should have their rewards updated
-    function unwrapFor(address _to, uint _amount) external override {
+    function unwrapFor(address _from, address _to, uint _amount) external override {
         _requireCallerIsAPorSP();
         // accumulateRewards(msg.sender);
         // _MasterChefJoe.withdraw(_poolPid, _amount);
@@ -126,15 +119,16 @@ contract WAAVE is ERC20_8, IWAsset {
         // each one has the ability to unwrap and burn WAssets they own and
         // send them to someone else
         // userInfo[_to].amount=userInfo[_to].amount-_amount;
-        _burn(msg.sender, _amount);
+        
         aToken.transfer(_to, _amount*aavePerShare()/1e18);
+        _burn(msg.sender, _amount);
     }
 
     // When funds are transferred into the stabilityPool on liquidation,
     // the rewards these funds are earning are allocated Yeti Finance Treasury.
     // But when an stabilityPool depositor wants to withdraw their collateral,
     // the wAsset is unwrapped and the rewards are no longer accruing to the Yeti Finance Treasury
-    function endTreasuryReward(uint _amount) external override {
+    function endTreasuryReward(address _to, uint _amount) external override {
         _requireCallerIsSP();
     }
 
@@ -177,14 +171,6 @@ contract WAAVE is ERC20_8, IWAsset {
         // _sendReward(msg.sender, _to);
     }
 
-
-    // Only callable by ActivePool.
-    // Claims reward on behalf of a borrower as part of the process
-    // of withdrawing a wrapped asset from borrower's trove
-    function claimRewardFor(address _for) external override {
-        _requireCallerIsActivePool();
-
-    }
 
 
   

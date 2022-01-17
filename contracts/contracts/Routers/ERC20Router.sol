@@ -12,9 +12,9 @@ import "../YUSDToken.sol";
 contract ERC20Router is IYetiRouter {
     using SafeMath for uint256;
 
-    address public activePoolAddress;
-    address public traderJoeRouter;
-    address public yusdTokenAddress;
+    address internal activePoolAddress;
+    address internal traderJoeRouter;
+    address internal yusdTokenAddress;
     string public name;
 
     constructor(
@@ -37,7 +37,7 @@ contract ERC20Router is IYetiRouter {
         address _endingTokenAddress,
         uint256 _amount,
         uint256 _minSwapAmount
-    ) public override returns (uint256 _amountOut) {
+    ) public override returns (uint256) {
         require(
             _startingTokenAddress == yusdTokenAddress,
             "Cannot route from a token other than YUSD"
@@ -68,7 +68,7 @@ contract ERC20Router is IYetiRouter {
         address _endingTokenAddress,
         uint256 _amount,
         uint256 _minSwapAmount
-    ) external override returns (uint256 _amountOut) {
+    ) external override returns (uint256) {
         require(
             _endingTokenAddress == yusdTokenAddress,
             "Cannot unroute from a token other than YUSD"

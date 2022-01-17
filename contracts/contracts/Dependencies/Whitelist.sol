@@ -30,9 +30,9 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         uint256 ratio; // 10**18 * the ratio. i.e. ratio = .95 * 10**18 for 95%. More risky collateral has a lower ratio
         address oracle;
         uint256 decimals;
-        bool active;
         address priceCurve;
         uint256 index;
+        bool active;
         bool isWrapped;
         address defaultRouter;
     }
@@ -42,6 +42,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     IStabilityPool stabilityPool;
     ICollSurplusPool collSurplusPool;
     address borrowerOperationsAddress;
+    bool private addressesSet;
 
     mapping(address => CollateralParams) public collateralParams;
 
@@ -63,10 +64,15 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     // index is still 0 then it does not exist in the mapping.
     // no require here for valid collateral 0 index because that means it exists. 
     modifier exists(address _collateral) {
-        if (validCollateral.length != 0 && validCollateral[0] != _collateral) {
-            require(collateralParams[_collateral].index != 0, "collateral does not exists");
-        }
+        _exists(_collateral);
         _;
+    }
+
+    // Calling from here makes it not inline, reducing contract size and gas. 
+    function _exists(address _collateral) internal view {
+        if (validCollateral[0] != _collateral) {
+            require(collateralParams[_collateral].index != 0, "collateral does not exist");
+        }
     }
 
     // ----------Only Owner Setter Functions----------
@@ -78,6 +84,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         address _collSurplusPoolAddress,
         address _borrowerOperationsAddress
     ) external override onlyOwner {
+        require(!addressesSet, "addresses already set");
         checkContract(_activePoolAddress);
         checkContract(_defaultPoolAddress);
         checkContract(_stabilityPoolAddress);
@@ -89,6 +96,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         stabilityPool = IStabilityPool(_stabilityPoolAddress);
         collSurplusPool = ICollSurplusPool(_collSurplusPoolAddress);
         borrowerOperationsAddress = _borrowerOperationsAddress;
+        addressesSet = true;
     }
 
     function addCollateral(
@@ -106,9 +114,10 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         checkContract(_routerAddress);
         // If collateral list is not 0, and if the 0th index is not equal to this collateral,
         // then if index is 0 that means it is not set yet.
+        require(_minRatio < 11e17, "ratio must be less than 1.10"); //=> greater than 1.1 would mean taking out more YUSD than collateral VC
+
         if (validCollateral.length != 0) {
-            require(validCollateral[0] != _collateral, "collateral already exists");
-            require(collateralParams[_collateral].index == 0, "collateral already exists");
+            require(validCollateral[0] != _collateral && collateralParams[_collateral].index == 0, "collateral already exists");
         }
 
         validCollateral.push(_collateral);
@@ -116,9 +125,9 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
             _minRatio,
             _oracle,
             _decimals,
-            true,
             _priceCurve,
             validCollateral.length - 1, 
+            true,
             _isWrapped,
             _routerAddress
         );
@@ -207,7 +216,8 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         onlyOwner
     {
         checkContract(_collateral);
-        require(_ratio < 1100000000000000000, "ratio must be less than 1.10 => greater than 1.1 would mean taking out more YUSD than collateral VC");
+        require(_ratio < 11e17, "ratio must be less than 1.10"); //=> greater than 1.1 would mean taking out more YUSD than collateral VC
+        require(collateralParams[_collateral].ratio < _ratio, "New SR must be greater than previous SR");
         collateralParams[_collateral].ratio = _ratio;
 
         // throw event
@@ -242,7 +252,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     }
 
     function getRatio(address _collateral)
-        public
+        external
         view
         override
         exists(_collateral)
@@ -292,7 +302,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     }
 
     function getIndex(address _collateral)
-        public
+        external
         view
         override
         exists(_collateral)
@@ -323,7 +333,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     ) external override exists(_collateral) returns (uint256 fee) {
         require(
             msg.sender == borrowerOperationsAddress,
-            "only borrower operations can call this function"
+            "caller must be BO"
         );
         IPriceCurve priceCurve = IPriceCurve(collateralParams[_collateral].priceCurve);
         return
@@ -344,8 +354,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         returns (uint256)
     {
         IPriceFeed collateral_priceFeed = IPriceFeed(collateralParams[_collateral].oracle);
-        uint256 price = collateral_priceFeed.fetchPrice_v();
-        return price;
+        return collateral_priceFeed.fetchPrice_v();
     }
 
     // Gets the value of that collateral type, of that amount, in USD terms.
@@ -363,19 +372,21 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
 
     // Gets the value of that collateral type, of that amount, in VC terms.
     function getValueVC(address _collateral, uint256 _amount)
-        public
+        external
         view
         override
         exists(_collateral)
         returns (uint256)
     {
-        uint256 price = getPrice(_collateral);
-        uint256 decimals = collateralParams[_collateral].decimals;
-        uint256 ratio = collateralParams[_collateral].ratio;
+        // uint256 price = getPrice(_collateral);
+        // uint256 decimals = collateralParams[_collateral].decimals;
+        // uint256 ratio = collateralParams[_collateral].ratio;
+        // return (price.mul(_amount).mul(ratio).div(10**(18 + decimals)));
 
         // div by 10**18 for price adjustment
         // and divide by 10 ** decimals for decimal adjustment
-        return (price.mul(_amount).mul(ratio).div(10**(18 + decimals)));
+        // do inline since this function is called often
+        return ((getPrice(_collateral)).mul(_amount).mul(collateralParams[_collateral].ratio).div(10**(18 + collateralParams[_collateral].decimals)));
     }
 
 

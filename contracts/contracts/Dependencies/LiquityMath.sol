@@ -8,6 +8,7 @@ library LiquityMath {
     using SafeMath for uint;
 
     uint internal constant DECIMAL_PRECISION = 1e18;
+    uint internal constant HALF_DECIMAL_PRECISION = 5e17;
 
     function _min(uint _a, uint _b) internal pure returns (uint) {
         return (_a < _b) ? _a : _b;
@@ -27,7 +28,7 @@ library LiquityMath {
     function decMul(uint x, uint y) internal pure returns (uint decProd) {
         uint prod_xy = x.mul(y);
 
-        decProd = prod_xy.add(DECIMAL_PRECISION / 2).div(DECIMAL_PRECISION);
+        decProd = prod_xy.add(HALF_DECIMAL_PRECISION).div(DECIMAL_PRECISION);
     }
 
     /* 
@@ -50,7 +51,7 @@ library LiquityMath {
     */
     function _decPow(uint _base, uint _minutes) internal pure returns (uint) {
        
-        if (_minutes > 525600000) {_minutes = 525600000;}  // cap to avoid overflow
+        if (_minutes > 5256e5) {_minutes = 5256e5;}  // cap to avoid overflow
     
         if (_minutes == 0) {return DECIMAL_PRECISION;}
 
@@ -80,8 +81,8 @@ library LiquityMath {
     //  _coll should be the amount of VC and _debt is debt of YUSD\
     // new collateral ratio is 10**18 times the collateral ratio. (150% => 1.5e18)
     function _computeCR(uint _coll, uint _debt) internal pure returns (uint) {
-        if (_debt > 0) {
-            uint newCollRatio = _coll.mul(10**18).div(_debt);
+        if (_debt != 0) {
+            uint newCollRatio = _coll.mul(1e18).div(_debt);
             return newCollRatio;
         }
         // Return the maximal value for uint256 if the Trove has a debt of 0. Represents "infinite" CR.

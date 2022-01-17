@@ -10,7 +10,31 @@ import "./Dependencies/TroveManagerBase.sol";
  * related to Liquidations. 
  */
 
-contract TroveManagerLiquidations is TroveManagerBase {
+contract TroveManagerLiquidations is TroveManagerBase, ITroveManagerLiquidations {
+    bytes32 constant public NAME = "TroveManagerRedemptions";
+
+
+    address internal borrowerOperationsAddress;
+
+    IStabilityPool internal stabilityPoolContract;
+
+    ITroveManager internal troveManager;
+
+    IYUSDToken internal yusdTokenContract;
+
+    IYETIToken internal yetiTokenContract;
+
+    ISYETI internal sYETIContract;
+
+    ITroveManagerLiquidations internal troveManagerLiquidations;
+
+    address internal gasPoolAddress;
+
+    address internal troveManagerAddress;
+
+    ISortedTroves internal sortedTroves;
+
+    ICollSurplusPool internal collSurplusPool;
 
     address yetiFinanceTreasury;
 
@@ -97,20 +121,6 @@ contract TroveManagerLiquidations is TroveManagerBase {
         address _troveManagerAddress,
         address _yetiFinanceTreasury
     ) external onlyOwner {
-        checkContract(_borrowerOperationsAddress);
-        checkContract(_activePoolAddress);
-        checkContract(_defaultPoolAddress);
-        checkContract(_stabilityPoolAddress);
-        checkContract(_gasPoolAddress);
-        checkContract(_collSurplusPoolAddress);
-        checkContract(_yusdTokenAddress);
-        checkContract(_sortedTrovesAddress);
-        checkContract(_yetiTokenAddress);
-        checkContract(_sYETIAddress);
-        checkContract(_whitelistAddress);
-        checkContract(_troveManagerAddress);
-        checkContract(_yetiFinanceTreasury);
-
         borrowerOperationsAddress = _borrowerOperationsAddress;
         activePool = IActivePool(_activePoolAddress);
         defaultPool = IDefaultPool(_defaultPoolAddress);
@@ -126,17 +136,6 @@ contract TroveManagerLiquidations is TroveManagerBase {
         troveManagerAddress = _troveManagerAddress;
         yetiFinanceTreasury = _yetiFinanceTreasury;
 
-        emit BorrowerOperationsAddressChanged(_borrowerOperationsAddress);
-        emit ActivePoolAddressChanged(_activePoolAddress);
-        emit DefaultPoolAddressChanged(_defaultPoolAddress);
-        emit StabilityPoolAddressChanged(_stabilityPoolAddress);
-        emit GasPoolAddressChanged(_gasPoolAddress);
-        emit CollSurplusPoolAddressChanged(_collSurplusPoolAddress);
-        emit YUSDTokenAddressChanged(_yusdTokenAddress);
-        emit SortedTrovesAddressChanged(_sortedTrovesAddress);
-        emit YETITokenAddressChanged(_yetiTokenAddress);
-        emit SYETIAddressChanged(_sYETIAddress);
-
         _renounceOwnership();
     }
 
@@ -144,9 +143,9 @@ contract TroveManagerLiquidations is TroveManagerBase {
      * Function for liquidating a list of troves in a single transaction. Will perform as many as it can 
      * and looks at if it is eligible for liquidation based on the current ICR value. 
      */
-    function batchLiquidateTroves(address[] memory _troveArray, address _liquidator) public {
+    function batchLiquidateTroves(address[] memory _troveArray, address _liquidator) external override {
         _requireCallerisTroveManager();
-        require(_troveArray.length != 0, "TroveManager: Calldata address array must not be empty");
+        require(_troveArray.length != 0, "TML: One trove must exist");
 
         IActivePool activePoolCached = activePool;
         IDefaultPool defaultPoolCached = defaultPool;
@@ -176,7 +175,7 @@ contract TroveManagerLiquidations is TroveManagerBase {
             );
         }
 
-        require(totals.totalDebtInSequence > 0, "TroveManager: nothing to liquidate");
+        require(totals.totalDebtInSequence != 0, "TML: nothing to liquidate");
         // Move liquidated Collateral and YUSD to the appropriate pools
         stabilityPoolCached.offset(
             totals.totalDebtToOffset,
@@ -250,8 +249,8 @@ contract TroveManagerLiquidations is TroveManagerBase {
         vars.entireSystemDebt = getEntireSystemDebt();
         // get total VC
         vars.entireSystemColl = getEntireSystemColl();
-
-        for (vars.i = 0; vars.i < _troveArray.length; vars.i++) {
+        uint256 troveArrayLen = _troveArray.length;
+        for (vars.i = 0; vars.i < troveArrayLen; ++vars.i) {
             vars.user = _troveArray[vars.i];
 
             // Skip non-active troves
@@ -282,6 +281,10 @@ contract TroveManagerLiquidations is TroveManagerBase {
                 vars.remainingYUSDInStabPool = vars.remainingYUSDInStabPool.sub(
                     singleLiquidation.debtToOffset
                 );
+
+                // If wrapped assets exist then update the reward to this contract temporarily
+                _updateWAssetsRewardOwner(singleLiquidation.collGasCompensation, vars.user, address(this));
+
                 vars.entireSystemDebt = vars.entireSystemDebt.sub(singleLiquidation.debtToOffset);
 
                 uint256 collToSendToSpVc = _getVCColls(singleLiquidation.collToSendToSP);
@@ -314,6 +317,9 @@ contract TroveManagerLiquidations is TroveManagerBase {
                     singleLiquidation.debtToOffset
                 );
 
+                // If wrapped assets exist then update the reward to this contract temporarily
+                _updateWAssetsRewardOwner(singleLiquidation.collGasCompensation, vars.user, address(this));
+
                 // Add liquidation values to their respective running totals
                 totals = _addLiquidationValuesToTotals(totals, singleLiquidation);
             } else continue; // In Normal Mode skip troves with ICR >= MCR
@@ -330,7 +336,8 @@ contract TroveManagerLiquidations is TroveManagerBase {
         LiquidationValues memory singleLiquidation;
 
         vars.remainingYUSDInStabPool = _YUSDInStabPool;
-        for (vars.i = 0; vars.i < _troveArray.length; vars.i++) {
+        uint256 troveArrayLen = _troveArray.length;
+        for (vars.i = 0; vars.i < troveArrayLen; ++vars.i) {
             vars.user = _troveArray[vars.i];
             vars.ICR = troveManager.getCurrentICR(vars.user);
             if (vars.ICR < MCR) {
@@ -343,6 +350,9 @@ contract TroveManagerLiquidations is TroveManagerBase {
                 vars.remainingYUSDInStabPool = vars.remainingYUSDInStabPool.sub(
                     singleLiquidation.debtToOffset
                 );
+
+                // If wrapped assets exist then update the reward to this contract temporarily
+                _updateWAssetsRewardOwner(singleLiquidation.collGasCompensation, vars.user, address(this));
 
                 // Add liquidation values to their respective running totals
                 totals = _addLiquidationValuesToTotals(totals, singleLiquidation);
@@ -382,15 +392,12 @@ contract TroveManagerLiquidations is TroveManagerBase {
             singleLiquidation.entireTroveColl
         );
 
-        // WAssets sent as liquidation reward will be unstaked and no longer accrue rewards
-        _updateWAssetsRewardOwner(singleLiquidation.collGasCompensation, _borrower, address(0));
-
         singleLiquidation.YUSDGasCompensation = YUSD_GAS_COMPENSATION;
 
         vars.collToLiquidate.tokens = singleLiquidation.entireTroveColl.tokens;
-        vars.collToLiquidate.amounts = new uint256[](vars.collToLiquidate.tokens.length);
-
-        for (uint256 i = 0; i < vars.collToLiquidate.tokens.length; i++) {
+        uint256 collToLiquidateLen = vars.collToLiquidate.tokens.length;
+        vars.collToLiquidate.amounts = new uint256[](collToLiquidateLen);
+        for (uint256 i; i < collToLiquidateLen; ++i) {
             vars.collToLiquidate.amounts[i] = singleLiquidation.entireTroveColl.amounts[i].sub(
                 singleLiquidation.collGasCompensation.amounts[i]
             );
@@ -423,7 +430,7 @@ contract TroveManagerLiquidations is TroveManagerBase {
             singleLiquidation.entireTroveDebt,
             TroveManagerOperation.liquidateInNormalMode
         );
-        newColls memory borrowerColls;// = troveManager.getTroveColls(_borrower);
+        newColls memory borrowerColls;
         emit TroveUpdated(
             _borrower,
             0,
@@ -431,7 +438,6 @@ contract TroveManagerLiquidations is TroveManagerBase {
             borrowerColls.amounts,
             TroveManagerOperation.liquidateInNormalMode
         );
-        return singleLiquidation;
     }
 
 
@@ -463,15 +469,12 @@ contract TroveManagerLiquidations is TroveManagerBase {
             singleLiquidation.entireTroveColl
         );
 
-        // WAssets sent as liquidation reward will be unstaked and no longer accrue rewards
-        _updateWAssetsRewardOwner(singleLiquidation.collGasCompensation, _borrower, address(0));
-
         singleLiquidation.YUSDGasCompensation = YUSD_GAS_COMPENSATION;
 
         vars.collToLiquidate.tokens = singleLiquidation.entireTroveColl.tokens;
-        vars.collToLiquidate.amounts = new uint256[](vars.collToLiquidate.tokens.length);
-
-        for (uint256 i = 0; i < vars.collToLiquidate.tokens.length; i++) {
+        uint256 collToLiquidateLen = vars.collToLiquidate.tokens.length;
+        vars.collToLiquidate.amounts = new uint256[](collToLiquidateLen);
+        for (uint256 i; i < collToLiquidateLen; ++i) {
             vars.collToLiquidate.amounts[i] = singleLiquidation.entireTroveColl.amounts[i].sub(
                 singleLiquidation.collGasCompensation.amounts[i]
             );
@@ -516,7 +519,8 @@ contract TroveManagerLiquidations is TroveManagerBase {
             );
 
             // If 100% < ICR < MCR, offset as much as possible, and redistribute the remainder
-        } else if ((_ICR > _100pct) && (_ICR < MCR)) {
+            // ICR > 100% is implied by prevoius state. 
+        } else if (_ICR < MCR) {
 
             troveManager.movePendingTroveRewardsToActivePool(
                 _activePool,
@@ -561,9 +565,10 @@ contract TroveManagerLiquidations is TroveManagerBase {
              * and there is YUSD in the Stability Pool, only offset, with no redistribution,
              * but at a capped rate of 1.1 and only if the whole debt can be liquidated.
              * The remainder due to the capped rate will be claimable as collateral surplus.
+             * ICR >= 110% is implied from last else if statement. 
              */
         } else if (
-            (_ICR >= MCR) && (_ICR < _TCR) && (singleLiquidation.entireTroveDebt <= _YUSDInStabPool)
+           (_ICR < _TCR) && (singleLiquidation.entireTroveDebt <= _YUSDInStabPool)
         ) {
             troveManager.movePendingTroveRewardsToActivePool(
                 _activePool,
@@ -574,7 +579,7 @@ contract TroveManagerLiquidations is TroveManagerBase {
                 _borrower
             );
 
-            assert(_YUSDInStabPool != 0);
+            require(_YUSDInStabPool != 0, "TML: zero YUSD in Stab Pool");
 
             troveManager.removeStakeTLR(_borrower);
 
@@ -621,8 +626,6 @@ contract TroveManagerLiquidations is TroveManagerBase {
                 singleLiquidation.collSurplus.amounts
             );
         }
-
-        return singleLiquidation;
     }
 
     function _updateSingleLiquidation(
@@ -651,9 +654,10 @@ contract TroveManagerLiquidations is TroveManagerBase {
         uint256 _YUSDInStabPool
     ) internal view returns (LocalVariables_ORVals memory or_vals) {
         or_vals.collToRedistribute.tokens = _collsToLiquidate.tokens;
-        or_vals.collToRedistribute.amounts = new uint256[](_collsToLiquidate.tokens.length);
+        uint256 collsToLiquidateLen = _collsToLiquidate.tokens.length;
+        or_vals.collToRedistribute.amounts = new uint256[](collsToLiquidateLen);
 
-        if (_YUSDInStabPool > 0) {
+        if (_YUSDInStabPool != 0) {
             /*
              * Offset as much debt & collateral as possible against the Stability Pool, and redistribute the remainder
              * between all active troves.
@@ -670,10 +674,10 @@ contract TroveManagerLiquidations is TroveManagerBase {
              *  - sent to the collSurplusPool and can be claimed by the borrower.
              */
             or_vals.collToSendToSP.tokens = _collsToLiquidate.tokens;
-            or_vals.collToSendToSP.amounts = new uint256[](_collsToLiquidate.tokens.length);
+            or_vals.collToSendToSP.amounts = new uint256[](collsToLiquidateLen);
 
             or_vals.collSurplus.tokens = _collsToLiquidate.tokens;
-            or_vals.collSurplus.amounts = new uint256[](_collsToLiquidate.tokens.length);
+            or_vals.collSurplus.amounts = new uint256[](collsToLiquidateLen);
 
             or_vals.debtToOffset = LiquityMath._min(_entireTroveDebt, _YUSDInStabPool);
 
@@ -697,7 +701,7 @@ contract TroveManagerLiquidations is TroveManagerBase {
             // then this is surplus collateral that can be claimed by the borrower
             uint256 collSurplusRatio = collOffsetRatio.sub(SPRatio);
 
-            for (uint256 i = 0; i < _collsToLiquidate.tokens.length; i++) {
+            for (uint256 i; i < collsToLiquidateLen; ++i) {
                 or_vals.collToSendToSP.amounts[i] = _collsToLiquidate.amounts[i].mul(SPRatio).div(
                     _100pct
                 ).div(_100pct);
@@ -717,7 +721,7 @@ contract TroveManagerLiquidations is TroveManagerBase {
         } else {
             // all colls are redistributed because no YUSD in stability pool to liquidate
             or_vals.debtToOffset = 0;
-            for (uint256 i = 0; i < _collsToLiquidate.tokens.length; i++) {
+            for (uint256 i; i < collsToLiquidateLen; ++i) {
                 or_vals.collToRedistribute.amounts[i] = _collsToLiquidate.amounts[i];
             }
             or_vals.debtToRedistribute = _entireTroveDebt;
@@ -758,8 +762,6 @@ contract TroveManagerLiquidations is TroveManagerBase {
             oldTotals.totalCollSurplus,
             singleLiquidation.collSurplus
         );
-
-        return newTotals;
     }
 
     /*
@@ -786,7 +788,6 @@ contract TroveManagerLiquidations is TroveManagerBase {
         uint SPRatio = USD_Value_To_Send_To_SP.mul(_100pct).div(USD_Value_of_Trove_Colls);
         SPRatio = LiquityMath._min(SPRatio, _100pct);
 
-
         singleLiquidation.entireTroveDebt = _entireTroveDebt;
         singleLiquidation.entireTroveColl = _entireTroveColl;
 
@@ -796,15 +797,17 @@ contract TroveManagerLiquidations is TroveManagerBase {
         singleLiquidation.debtToRedistribute = 0;
 
         singleLiquidation.collToSendToSP.tokens = _troveTokens;
-        singleLiquidation.collToSendToSP.amounts = new uint[](_troveTokens.length);
+        uint256 troveTokensLen = _troveTokens.length;
+        
+        singleLiquidation.collToSendToSP.amounts = new uint[](troveTokensLen);
 
         singleLiquidation.collSurplus.tokens = _troveTokens;
-        singleLiquidation.collSurplus.amounts = new uint[](_troveTokens.length);
+        singleLiquidation.collSurplus.amounts = new uint[](troveTokensLen);
 
         singleLiquidation.collGasCompensation.tokens = _troveTokens;
-        singleLiquidation.collGasCompensation.amounts = new uint[](_troveTokens.length);
+        singleLiquidation.collGasCompensation.amounts = new uint[](troveTokensLen);
 
-        for (uint i = 0; i < _troveTokens.length; i++) {
+        for (uint256 i; i < troveTokensLen; ++i) {
             uint _cappedCollAmount = SPRatio.mul(_troveAmounts[i]).div(_100pct);
             uint _gasComp = _cappedCollAmount.div(PERCENT_DIVISOR);
             uint _toSP = _cappedCollAmount.sub(_gasComp);
@@ -823,11 +826,12 @@ contract TroveManagerLiquidations is TroveManagerBase {
         address[] memory _tokens,
         uint256[] memory _amounts
     ) internal {
-        if (_YUSD > 0) {
+        if (_YUSD != 0) {
             yusdTokenContract.returnFromPool(gasPoolAddress, _liquidator, _YUSD);
         }
 
-        _activePool.sendCollateralsUnwrap(_liquidator, _tokens, _amounts, false);
+        // This contract owns the rewards temporarily until the liquidation is complete
+        _activePool.sendCollateralsUnwrap(address(this), _liquidator, _tokens, _amounts);
     }
 
     /*
@@ -836,16 +840,28 @@ contract TroveManagerLiquidations is TroveManagerBase {
      * Stability Pool or Default Pool
     */
     function _updateWAssetsRewardOwner(newColls memory _colls, address _borrower, address _newOwner) internal {
-        for (uint i = 0; i < _colls.tokens.length; i++) {
+        uint256 collsLen = _colls.tokens.length;
+        for (uint256 i; i < collsLen; ++i) {
             address token = _colls.tokens[i];
-            uint amount = _colls.amounts[i];
             if (whitelist.isWrapped(token)) {
-                IWAsset(token).updateReward(_borrower, _newOwner, amount);
+                IWAsset(token).updateReward(_borrower, _newOwner, _colls.amounts[i]);
             }
         }
     }
 
     function _requireCallerisTroveManager() internal view {
-        require(msg.sender == troveManagerAddress);
+        require(msg.sender == troveManagerAddress, "Caller not TM");
+    }
+
+
+    // Return the amount of collateral to be drawn from a trove's collateral and sent as gas compensation.
+    function _getCollGasCompensation(newColls memory _coll) internal pure returns (newColls memory) {
+        require(_coll.tokens.length == _coll.amounts.length, "Not same length");
+
+        uint[] memory amounts = new uint[](_coll.tokens.length);
+        for (uint256 i; i < _coll.tokens.length; ++i) {
+            amounts[i] = _coll.amounts[i] / PERCENT_DIVISOR;
+        }
+        return newColls(_coll.tokens, amounts);
     }
 }

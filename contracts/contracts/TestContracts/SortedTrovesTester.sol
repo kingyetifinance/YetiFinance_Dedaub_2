@@ -20,7 +20,7 @@ contract SortedTrovesTester is SortedTroves {
     function callReInsert(address _id, uint256 _newICR, address _prevId, address _nextId) external {
         require(contains(_id), "SortedTroves: List does not contain the id");
         // ICR must be non-zero
-        require(_newICR > 0, "SortedTroves: ICR must be positive");
+        require(_newICR != 0, "SortedTroves: ICR must be positive");
 
         // Remove node from the list
         _remove(_id);

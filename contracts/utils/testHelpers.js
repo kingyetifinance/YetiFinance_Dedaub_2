@@ -2220,7 +2220,7 @@ class TestHelper {
       partialRedemptionNewICR,
       maxIterations,
       // maxFee,
-      { from: redeemer, gasPrice: 10018651 },
+      { from: redeemer, gasPrice: 100879745 },
     )
 
     return tx

@@ -7,7 +7,7 @@ import "../Interfaces/IERC20.sol";
 
 
 contract TokenScript is CheckContract {
-    string constant public NAME = "TokenScript";
+    bytes32 constant public NAME = "TokenScript";
 
     IERC20 immutable token;
 

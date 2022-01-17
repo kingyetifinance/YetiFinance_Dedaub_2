@@ -17,6 +17,7 @@ import "./Dependencies/SafeMath.sol";
 import "./Dependencies/LiquitySafeMath128.sol";
 import "./Dependencies/Ownable.sol";
 import "./Dependencies/CheckContract.sol";
+import "./Dependencies/SafeERC20.sol";
 
 
 /*
@@ -150,18 +151,19 @@ import "./Dependencies/CheckContract.sol";
  */
 contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
     using LiquitySafeMath128 for uint128;
+    using SafeERC20 for IERC20;
 
     string public constant NAME = "StabilityPool";
 
-    address public troveManagerLiquidationsAddress;
-    address public whitelistAddress;
+    address internal troveManagerLiquidationsAddress;
+    address internal whitelistAddress;
 
-    IBorrowerOperations public borrowerOperations;
-    ITroveManager public troveManager;
-    IYUSDToken public yusdToken;
-    ICommunityIssuance public communityIssuance;
+    IBorrowerOperations internal borrowerOperations;
+    ITroveManager internal troveManager;
+    IYUSDToken internal yusdToken;
+    ICommunityIssuance internal communityIssuance;
     // Needed to check if there are pending liquidations
-    ISortedTroves public sortedTroves;
+    ISortedTroves internal sortedTroves;
 
     // Tracker for YUSD held in the pool. Changes when users deposit/withdraw, and when Trove debt is offset.
     uint256 internal totalYUSDDeposits;
@@ -347,7 +349,7 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
     /*
      * Returns all collateral balances in state. Not necessarily the contract's actual balances.
      */
-    function getAllCollateral() public view override returns (address[] memory, uint256[] memory) {
+    function getAllCollateral() external view override returns (address[] memory, uint256[] memory) {
         return (totalColl.tokens, totalColl.amounts);
     }
 
@@ -556,17 +558,18 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         uint256 _debtToOffset,
         uint256 _totalYUSDDeposits
     ) internal returns (uint256[] memory AssetGainPerUnitStaked, uint256 YUSDLossPerUnitStaked) {
-        uint256[] memory CollateralNumerators = new uint256[](_amountsAdded.length);
+        uint256 amountsLen = _amountsAdded.length;
+        uint256[] memory CollateralNumerators = new uint256[](amountsLen);
         uint256 currentP = P;
 
-        for (uint256 i = 0; i < _amountsAdded.length; i++) {
+        for (uint256 i; i < amountsLen; ++i) {
             uint256 tokenIDX = whitelist.getIndex(_tokens[i]);
             CollateralNumerators[i] = _amountsAdded[i].mul(DECIMAL_PRECISION).add(
                 lastAssetError_Offset[tokenIDX]
             );
         }
 
-        assert(_debtToOffset <= _totalYUSDDeposits);
+        require(_debtToOffset <= _totalYUSDDeposits, "SP:This debt less than totalYUSD");
         if (_debtToOffset == _totalYUSDDeposits) {
             YUSDLossPerUnitStaked = DECIMAL_PRECISION; // When the Pool depletes to 0, so does each deposit
             lastYUSDLossError_Offset = 0;
@@ -585,18 +588,17 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         }
 
         AssetGainPerUnitStaked = new uint256[](_amountsAdded.length);
-        for (uint256 i = 0; i < _amountsAdded.length; i++) {
+        for (uint256 i; i < amountsLen; ++i) {
             AssetGainPerUnitStaked[i] = CollateralNumerators[i].mul(currentP).div(_totalYUSDDeposits);
         }
 
-        for (uint256 i = 0; i < _amountsAdded.length; i++) {
+        for (uint256 i; i < amountsLen; ++i) {
             uint256 tokenIDX = whitelist.getIndex(_tokens[i]);
             lastAssetError_Offset[tokenIDX] = CollateralNumerators[i].sub(
                 AssetGainPerUnitStaked[i].mul(_totalYUSDDeposits).div(currentP)
             );
         }
 
-        return (AssetGainPerUnitStaked, YUSDLossPerUnitStaked);
     }
 
     // Update the Stability Pool reward sum S and product P
@@ -608,7 +610,7 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         uint256 currentP = P;
         uint256 newP;
 
-        assert(_YUSDLossPerUnitStaked <= DECIMAL_PRECISION);
+        require(_YUSDLossPerUnitStaked <= DECIMAL_PRECISION, "SP: YUSDLoss < 1");
         /*
          * The newProductFactor is the factor by which to change all deposits, due to the depletion of Stability Pool YUSD in the liquidation.
          * We make the product factor 0 if there was a pool-emptying. Otherwise, it is (1 - YUSDLossPerUnitStaked)
@@ -625,14 +627,15 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
          *
          * Since S corresponds to Collateral amount gain, and P to deposit loss, we update S first.
          */
-        for (uint256 i = 0; i < _assets.length; i++) {
+        uint256 assetsLen = _assets.length;
+        for (uint256 i; i < assetsLen; ++i) {
             address asset = _assets[i];
             
-            uint256 marginalAssetGain = _AssetGainPerUnitStaked[i];
+            // uint256 marginalAssetGain = _AssetGainPerUnitStaked[i]; only used once, named here for clarity.
             uint256 currentAssetS = epochToScaleToSum[asset][currentEpochCached][currentScaleCached];
-            uint256 newAssetS = currentAssetS.add(marginalAssetGain);
+            uint256 newAssetS = currentAssetS.add(_AssetGainPerUnitStaked[i]);
 
-            epochToScaleToSum[_assets[i]][currentEpochCached][currentScaleCached] = newAssetS;
+            epochToScaleToSum[asset][currentEpochCached][currentScaleCached] = newAssetS;
             emit S_Updated(asset, newAssetS, currentEpochCached, currentScaleCached);
         }
 
@@ -653,7 +656,7 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
             newP = currentP.mul(newProductFactor).div(DECIMAL_PRECISION);
         }
 
-        assert(newP > 0);
+        require(newP != 0, "SP: P = 0");
         P = newP;
         emit P_Updated(newP);
     }
@@ -688,12 +691,13 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
      * Given by the formula:  E = d0 * (S - S(0))/P(0)
      * where S(0) and P(0) are the depositor's snapshots of the sum S and product P, respectively.
      * d0 is the last recorded deposit value.
+     * returns assets, amounts
      */
     function getDepositorGains(address _depositor)
         public
         view
         override
-        returns (address[] memory assets, uint256[] memory amounts)
+        returns (address[] memory, uint256[] memory)
     {
         uint256 initialDeposit = deposits[_depositor].initialValue;
 
@@ -716,11 +720,11 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         returns (address[] memory assets, uint256[] memory amounts)
     {
         assets = whitelist.getValidCollateral();
-        amounts = new uint256[](assets.length);
-        for (uint256 i = 0; i < assets.length; i++) {
+        uint256 assetsLen = assets.length;
+        amounts = new uint256[](assetsLen);
+        for (uint256 i; i < assetsLen; ++i) {
             amounts[i] = _getGainFromSnapshots(initialDeposit, snapshots, assets[i]);
         }
-        return (assets, amounts);
     }
 
     // gets the gain in S for a given asset
@@ -938,13 +942,20 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         address[] memory assets,
         uint256[] memory amounts
     ) internal {
-        require(assets.length == amounts.length);
-        for (uint256 i = 0; i < assets.length; i++) {
-            if (whitelist.isWrapped(assets[i])){
-                IWAsset(assets[i]).endTreasuryReward(amounts[i]);
-                IWAsset(assets[i]).unwrapFor(_to, amounts[i]);
+        uint256 assetsLen = assets.length;
+        require(assetsLen == amounts.length, "SP:Length mismatch");
+        uint256 thisAmounts;
+        address thisAsset;
+        for (uint256 i; i < assetsLen; ++i) {
+            thisAmounts = amounts[i];
+            thisAsset = assets[i];
+            if (whitelist.isWrapped(thisAsset)) {
+                // In this case update the rewards from the treasury to the caller 
+                IWAsset(thisAsset).endTreasuryReward(address(this), thisAmounts);
+                // unwrapFor ends the rewards for the caller and transfers the tokens to the _to param. 
+                IWAsset(thisAsset).unwrapFor(address(this), _to, thisAmounts);
             } else {
-                IERC20(assets[i]).transfer(_to, amounts[i]);
+                IERC20(thisAsset).safeTransfer(_to, thisAmounts);
             }
         }
         totalColl.amounts = _leftSubColls(totalColl, assets, amounts);
@@ -990,8 +1001,8 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         if (_newValue == 0) {
             delete deposits[_depositor].frontEndTag;
             address[] memory colls = whitelist.getValidCollateral();
-
-            for (uint256 i = 0; i < colls.length; ++i) {
+            uint256 collsLen = colls.length;
+            for (uint256 i; i < collsLen; ++i) {
                 depositSnapshots[_depositor].S[colls[i]] = 0;
             }
             depositSnapshots[_depositor].P = 0;
@@ -1008,7 +1019,8 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         address[] memory allColls = whitelist.getValidCollateral();
 
         // Get S and G for the current epoch and current scale
-        for (uint256 i = 0; i < allColls.length; i++) {
+        uint256 allCollsLen = allColls.length;
+        for (uint256 i; i < allCollsLen; ++i) {
             address token = allColls[i];
             uint256 currentSForToken = epochToScaleToSum[token][currentEpochCached][
                 currentScaleCached
@@ -1072,65 +1084,66 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
 
     // --- 'require' functions ---
 
-    function _requireCallerIsTroveManager() internal view {
-        require(msg.sender == address(troveManager), "StabilityPool: Caller is not TroveManager");
-    }
-
     function _requireNoUnderCollateralizedTroves() internal view {
         address lowestTrove = sortedTroves.getLast();
         uint256 ICR = troveManager.getCurrentICR(lowestTrove);
-        require(ICR >= MCR, "StabilityPool: Cannot withdraw while there are troves with ICR < MCR");
+        require(ICR >= MCR, "SP:No Withdraw when troveICR<MCR");
     }
 
     function _requireUserHasDeposit(uint256 _initialDeposit) internal pure {
-        require(_initialDeposit > 0, "StabilityPool: User must have a non-zero deposit");
+        require(_initialDeposit != 0, "SP: require nonzero deposit");
     }
 
     function _requireUserHasNoDeposit(address _address) internal view {
         uint256 initialDeposit = deposits[_address].initialValue;
-        require(initialDeposit == 0, "StabilityPool: User must have no deposit");
+        require(initialDeposit == 0, "SP: User must have no deposit");
     }
 
     function _requireNonZeroAmount(uint256 _amount) internal pure {
-        require(_amount > 0, "StabilityPool: Amount must be non-zero");
-    }
-
-    function _requireCallerIsTML() internal view {
-        require(
-            msg.sender == address(troveManagerLiquidationsAddress),
-            "StabilityPool: Caller is not TML"
-        );
+        require(_amount != 0, "SP: Amount must be non-zero");
     }
 
     function _requireFrontEndNotRegistered(address _address) internal view {
         require(
             !frontEnds[_address].registered,
-            "StabilityPool: must not already be a registered front end"
+            "SP: Frontend already registered"
         );
     }
 
     function _requireFrontEndIsRegisteredOrZero(address _address) internal view {
         require(
             frontEnds[_address].registered || _address == address(0),
-            "StabilityPool: Tag must be a registered front end, or the zero address"
+            "SP: Frontend not registered"
         );
     }
 
     function _requireValidKickbackRate(uint256 _kickbackRate) internal pure {
         require(
             _kickbackRate <= DECIMAL_PRECISION,
-            "StabilityPool: Kickback rate must be in range [0,1]"
+            "SP:Invalid Kickback rate"
         );
     }
 
     function _requireCallerIsWhitelist() internal view {
-        require(msg.sender == whitelistAddress, "DefaultPool: Caller is not whitelist");
+        if (msg.sender != whitelistAddress) {
+            _revertWrongFuncCaller();
+        }
     }
 
     function _requireCallerIsActivePool() internal view {
-        require(msg.sender == address(activePool),
-            "Caller is not active pool"
-        );
+        if (msg.sender != address(activePool)) {
+            _revertWrongFuncCaller();
+        }
+    }
+
+    function _requireCallerIsTML() internal view {
+        if (msg.sender != address(troveManagerLiquidationsAddress)) {
+            _revertWrongFuncCaller();
+        }
+    }
+
+    function _revertWrongFuncCaller() internal view {
+        revert("SP: External caller not allowed");
     }
 
     // Should be called by ActivePool

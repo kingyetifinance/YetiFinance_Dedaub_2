@@ -382,7 +382,7 @@ contract('BorrowerOperations', async accounts => {
         assert.isFalse(txCarol.receipt.status)
       } catch (error) {
         assert.include(error.message, "revert")
-        assert.include(error.message, "Trove does not exist or is closed")
+        assert.include(error.message, "TroveInactive")
       }
 
       // Price drops
@@ -407,7 +407,7 @@ contract('BorrowerOperations', async accounts => {
         assert.isFalse(txBob.receipt.status)
       } catch (error) {
         assert.include(error.message, "revert")
-        assert.include(error.message, "Trove does not exist or is closed")
+        assert.include(error.message, "TroveInactive")
       }
     })
 
@@ -1072,8 +1072,9 @@ contract('BorrowerOperations', async accounts => {
     it("withdrawYUSD(): borrowing at non-zero base rate sends YUSD fee to sYETI contract", async () => {
       // time fast-forwards 1 year, and multisig stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // Check YETI YUSD balance before == 0
       const sYETI_YUSDBalance_Before = await yusdToken.balanceOf(sYETI.address)
@@ -1106,10 +1107,11 @@ contract('BorrowerOperations', async accounts => {
 
     if (!withProxy) { // TODO: use rawLogs instead of logs
       it("withdrawYUSD(): borrowing at non-zero base records the (drawn debt + fee) on the Trove struct", async () => {
-        // time fast-forwards 1 year, and multisig stakes 1 YETI
+        // time fast-forwards 1 year, and E stakes 1 YETI
         await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-        await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-        await sYETI.mint(dec(1, 18), { from: multisig })
+        await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+        await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+        await sYETI.mint(dec(1, 18), { from: E })
 
         await openTrove({ ICR: toBN(dec(10, 18)), extraParams: { from: whale } })
         await openTrove({ extraYUSDAmount: toBN(dec(30, 18)), ICR: toBN(dec(2, 18)), extraParams: { from: A } })
@@ -1146,8 +1148,9 @@ contract('BorrowerOperations', async accounts => {
     it("withdrawYUSD(): Borrowing at non-zero base rate increases the sYETI contract YUSD fees-per-unit-staked", async () => {
       // time fast-forwards 1 year, and multisig stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // @KingYeti: no F_YUSD() function
       // Check YETI contract YUSD fees-per-unit-staked is zero
@@ -1181,10 +1184,11 @@ contract('BorrowerOperations', async accounts => {
     })
 
     it("withdrawYUSD(): Borrowing at non-zero base rate sends requested amount to the user", async () => {
-      // time fast-forwards 1 year, and multisig stakes 1 YETI
+      // time fast-forwards 1 year, and E stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // Check YETI Staking contract balance before == 0
       const sYETI_YUSDBalance_Before = await yusdToken.balanceOf(sYETI.address)
@@ -1852,10 +1856,11 @@ contract('BorrowerOperations', async accounts => {
     })
 
     it("adjustTrove(): borrowing at non-zero base rate sends YUSD fee to sYETI contract", async () => {
-      // time fast-forwards 1 year, and multisig stakes 1 YETI
+      // time fast-forwards 1 year, and E stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // Check YETI YUSD balance before == 0
       const sYETI_YUSDBalance_Before = await yusdToken.balanceOf(sYETI.address)
@@ -1887,10 +1892,11 @@ contract('BorrowerOperations', async accounts => {
 
     if (!withProxy) { // TODO: use rawLogs instead of logs
       it("adjustTrove(): borrowing at non-zero base records the (drawn debt + fee) on the Trove struct", async () => {
-        // time fast-forwards 1 year, and multisig stakes 1 YETI
+        // time fast-forwards 1 year, and E stakes 1 YETI
         await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-        await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-        await sYETI.mint(dec(1, 18), { from: multisig })
+        await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+        await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+        await sYETI.mint(dec(1, 18), { from: E })
 
         await openTrove({ ICR: toBN(dec(10, 18)), extraParams: { from: whale } })
         await openTrove({ extraYUSDAmount: toBN(dec(30, 18)), ICR: toBN(dec(2, 18)), extraParams: { from: A } })
@@ -1928,10 +1934,11 @@ contract('BorrowerOperations', async accounts => {
     }
 
     it("adjustTrove(): Borrowing at non-zero base rate increases the sYETI contract YUSD fees-per-unit-staked", async () => {
-      // time fast-forwards 1 year, and multisig stakes 1 YETI
+      // time fast-forwards 1 year, and E stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // Check YETI contract YUSD fees-per-unit-staked is zero
       const F_YUSD_Before = await yusdToken.balanceOf(sYETI.address)
@@ -1964,10 +1971,11 @@ contract('BorrowerOperations', async accounts => {
     })
 
     it("adjustTrove(): Borrowing at non-zero base rate sends requested amount to the user", async () => {
-      // time fast-forwards 1 year, and multisig stakes 1 YETI
+      // time fast-forwards 1 year, and E stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // Check YETI Staking contract balance before == 0
       const sYETI_YUSDBalance_Before = await yusdToken.balanceOf(sYETI.address)
@@ -3680,10 +3688,11 @@ contract('BorrowerOperations', async accounts => {
     })
 
     it("openTrove(): borrowing at non-zero base rate sends YUSD fee to sYETI contract", async () => {
-      // time fast-forwards 1 year, and multisig stakes 1 YETI
+      // time fast-forwards 1 year, and E stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // Check YETI YUSD balance before == 0
       const sYETI_YUSDBalance_Before = await yusdToken.balanceOf(sYETI.address)
@@ -3715,10 +3724,11 @@ contract('BorrowerOperations', async accounts => {
 
     if (!withProxy) { // TODO: use rawLogs instead of logs
       it("openTrove(): borrowing at non-zero base records the (drawn debt + fee  + liq. reserve) on the Trove struct", async () => {
-        // time fast-forwards 1 year, and multisig stakes 1 YETI
+        // time fast-forwards 1 year, and E stakes 1 YETI
         await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-        await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-        await sYETI.mint(dec(1, 18), { from: multisig })
+        await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+        await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+        await sYETI.mint(dec(1, 18), { from: E })
 
         await openTrove({ extraYUSDAmount: toBN(dec(10000, 18)), ICR: toBN(dec(10, 18)), extraParams: { from: whale } })
         await openTrove({ extraYUSDAmount: toBN(dec(20000, 18)), ICR: toBN(dec(2, 18)), extraParams: { from: A } })
@@ -3756,10 +3766,10 @@ contract('BorrowerOperations', async accounts => {
     
     // @KingYeti: F_YUSD() function no longer exists
     // it("openTrove(): Borrowing at non-zero base rate increases the sYETI contract YUSD fees-per-unit-staked", async () => {
-    //   // time fast-forwards 1 year, and multisig stakes 1 YETI
+    //   // time fast-forwards 1 year, and E stakes 1 YETI
     //   await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-    //   await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-    //   await sYETI.mint(dec(1, 18), { from: multisig })
+    //   await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+    //   await sYETI.mint(dec(1, 18), { from: E })
     //
     //   // Check YETI contract YUSD fees-per-unit-staked is zero
     //   const F_YUSD_Before = await yusdToken.balanceOf(sYETI.address)
@@ -3790,10 +3800,11 @@ contract('BorrowerOperations', async accounts => {
     // })
 
     it("openTrove(): Borrowing at non-zero base rate sends requested amount to the user", async () => {
-      // time fast-forwards 1 year, and multisig stakes 1 YETI
+      // time fast-forwards 1 year, and E stakes 1 YETI
       await th.fastForwardTime(timeValues.SECONDS_IN_ONE_YEAR, web3.currentProvider)
-      await yetiToken.approve(sYETI.address, dec(1, 18), { from: multisig })
-      await sYETI.mint(dec(1, 18), { from: multisig })
+      await yetiToken.approve(sYETI.address, dec(1, 18), { from: E })
+      await yetiToken.unprotectedMint(E, dec(1, 18), {from : E})
+      await sYETI.mint(dec(1, 18), { from: E })
 
       // Check YETI Staking contract balance before == 0
       const sYETI_YUSDBalance_Before = await yusdToken.balanceOf(sYETI.address)

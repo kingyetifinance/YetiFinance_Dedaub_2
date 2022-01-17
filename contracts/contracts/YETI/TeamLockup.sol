@@ -12,7 +12,7 @@ contract TeamLockup {
     IERC20 YETI;
 
     uint immutable vestingStart;
-    uint immutable vestingLength; // number of YETI that are claimable every day after vesting starts
+    uint immutable vestingLength; // number of YETI that are claimable every second after vesting starts
     uint immutable totalVest;
     uint totalClaimed;
 
@@ -41,7 +41,7 @@ contract TeamLockup {
         uint timePastVesting = block.timestamp.sub(vestingStart);
 
         uint available = _min(totalVest,(totalVest.mul(timePastVesting)).div(vestingLength));
-        if (available > totalClaimed.add(_amount)) {
+        if (available >= totalClaimed.add(_amount)) {
             // there are _amount YETI tokens that are claimable
             totalClaimed = totalClaimed.add(_amount);
             require(YETI.transfer(multisig, _amount));

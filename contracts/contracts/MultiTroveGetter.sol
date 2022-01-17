@@ -107,7 +107,8 @@ contract MultiTroveGetter {
         data.allColls = whitelist.getValidCollateral();
         data.stakeAmounts = new uint[](data.allColls.length);
         data.snapshotAmounts = new uint[](data.allColls.length);
-        for (uint i = 0; i < data.allColls.length; i++) {
+        uint256 collsLen = data.allColls.length;
+        for (uint256 i; i < collsLen; ++i) {
             address token = data.allColls[i];
 
             data.stakeAmounts[i] = troveManager.getTroveStake(_troveOwner, token);

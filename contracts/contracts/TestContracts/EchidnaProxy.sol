@@ -132,7 +132,7 @@ contract EchidnaProxy {
     }
 
     function approvePrx(address spender, uint256 amount) external returns (bool) {
-        return yusdToken.approve(spender, amount);
+        return yusdToken.increaseAllowance(spender, amount);
     }
 
     function transferFromPrx(address sender, address recipient, uint256 amount) external returns (bool) {
@@ -140,6 +140,7 @@ contract EchidnaProxy {
     }
 
     function increaseAllowancePrx(address spender, uint256 addedValue) external returns (bool) {
+        require(yusdToken.approve(spender, 0));
         return yusdToken.increaseAllowance(spender, addedValue);
     }
 

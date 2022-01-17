@@ -18,7 +18,7 @@ import "./SYETIScript.sol";
 contract BorrowerWrappersScript is BorrowerOperationsScript, ETHTransferScript, SYETIScript {
     using SafeMath for uint;
 
-    string constant public NAME = "BorrowerWrappersScript";
+    bytes32 constant public NAME = "BorrowerWrappersScript";
 
     ITroveManager immutable troveManager;
     IStabilityPool immutable stabilityPool;
@@ -89,19 +89,19 @@ contract BorrowerWrappersScript is BorrowerOperationsScript, ETHTransferScript, 
 //        uint claimedCollateral = collBalanceAfter.sub(collBalanceBefore);
 //
 //        // Add claimed ETH to trove, get more YUSD and stake it into the Stability Pool
-//        if (claimedCollateral > 0) {
+//        if (claimedCollateral != 0) {
 //            _requireUserHasTrove(address(this));
 //            uint YUSDAmount = _getNetYUSDAmount(claimedCollateral);
 //            borrowerOperations.adjustTrove{ value: claimedCollateral }(_maxFee, 0, YUSDAmount, true, _upperHint, _lowerHint);
 //            // Provide withdrawn YUSD to Stability Pool
-//            if (YUSDAmount > 0) {
+//            if (YUSDAmount != 0) {
 //                stabilityPool.provideToSP(YUSDAmount, address(0));
 //            }
 //        }
 //
 //        // Stake claimed YETI
 //        uint claimedYETI = yetiBalanceAfter.sub(yetiBalanceBefore);
-//        if (claimedYETI > 0) {
+//        if (claimedYETI != 0) {
 //             .stake(claimedYETI);
 //        }
 //    }
@@ -119,20 +119,20 @@ contract BorrowerWrappersScript is BorrowerOperationsScript, ETHTransferScript, 
 //
 //        uint netYUSDAmount;
 //        // Top up trove and get more YUSD, keeping ICR constant
-//        if (gainedCollateral > 0) {
+//        if (gainedCollateral != 0) {
 //            _requireUserHasTrove(address(this));
 //            netYUSDAmount = _getNetYUSDAmount(gainedCollateral);
 //            borrowerOperations.adjustTrove{ value: gainedCollateral }(_maxFee, 0, netYUSDAmount, true, _upperHint, _lowerHint);
 //        }
 //
 //        uint totalYUSD = gainedYUSD.add(netYUSDAmount);
-//        if (totalYUSD > 0) {
+//        if (totalYUSD != 0) {
 //            stabilityPool.provideToSP(totalYUSD, address(0));
 //
 //            // Providing to Stability Pool also triggers YETI claim, so stake it if any
 //            uint yetiBalanceAfter = yetiToken.balanceOf(address(this));
 //            uint claimedYETI = yetiBalanceAfter.sub(yetiBalanceBefore);
-//            if (claimedYETI > 0) {
+//            if (claimedYETI != 0) {
 //                sYETI.mint(claimedYETI);
 //            }
 //        }
@@ -151,6 +151,6 @@ contract BorrowerWrappersScript is BorrowerOperationsScript, ETHTransferScript, 
 //    }
 
     function _requireUserHasTrove(address _depositor) internal view {
-        require(troveManager.getTroveStatus(_depositor) == 1, "BorrowerWrappersScript: caller must have an active trove");
+        require(troveManager.isTroveActive(_depositor), "BorrowerWrappersScript: caller must have an active trove");
     }
 }

@@ -7,7 +7,7 @@ import "../Interfaces/ITroveManager.sol";
 
 
 contract TroveManagerScript is CheckContract {
-    string constant public NAME = "TroveManagerScript";
+    bytes32 constant public NAME = "TroveManagerScript";
 
     ITroveManager immutable troveManager;
 

@@ -11,12 +11,12 @@ import "../Dependencies/SafeMath.sol";
 contract WJLPRouter is IYetiRouter {
     using SafeMath for uint256;
 
-    address public activePoolAddress;
+    address internal activePoolAddress;
     address public JLPAddress;
     address public WJLPAddress;
     IJoeZapper public joeZapper;
     IWAsset public WJLP;
-    address public yusdTokenAddress;
+    address internal yusdTokenAddress;
 
     constructor(
         address _activePoolAddress,
@@ -45,7 +45,7 @@ contract WJLPRouter is IYetiRouter {
         address _endingTokenAddress,
         uint256 _amount,
         uint256 _minSwapAmount
-    ) public override returns (uint256 _amountOut) {
+    ) public override returns (uint256) {
         require(_endingTokenAddress == WJLPAddress, "Ending token address must be WJLP");
         // JLP -> WJLP then send to active pool
         if (_startingTokenAddress == JLPAddress) {
@@ -95,7 +95,7 @@ contract WJLPRouter is IYetiRouter {
         address _fromUser,
         address _owner
     ) internal {
-        WJLP.wrap(_amount, _fromUser, activePoolAddress, _owner);
+        WJLP.wrap(_amount, address(this), activePoolAddress, _owner);
     }
 
     // takes avax and zaps it into the specific JLP token.

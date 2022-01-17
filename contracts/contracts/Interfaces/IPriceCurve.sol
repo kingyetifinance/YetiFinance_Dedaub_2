@@ -22,6 +22,7 @@ interface IPriceCurve {
     function setFeeCapAndTime(uint256 _lastFeePercent, uint256 _lastFeeTime) external;
 
     // Gets the fee cap and time currently. Used for setting new values for next price curve. 
+    // returns lastFeePercent, lastFeeTime
     function getFeeCapAndTime() external view returns (uint256 _lastFeePercent, uint256 _lastFeeTime);
 
     /** 

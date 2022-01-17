@@ -18,10 +18,10 @@ library BoringERC20 {
         } else if (data.length == 32) {
             uint8 i = 0;
             while(i < 32 && data[i] != 0) {
-                i++;
+                ++i;
             }
             bytes memory bytesArray = new bytes(i);
-            for (i = 0; i < 32 && data[i] != 0; i++) {
+            for (i = 0; i < 32 && data[i] != 0; ++i) {
                 bytesArray[i] = data[i];
             }
             return string(bytesArray);

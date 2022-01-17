@@ -41,7 +41,7 @@ module.exports = {
                 settings: {
                     optimizer: {
                         enabled: true,
-                        runs: 100
+                        runs: 2**32 - 1
                     }
                 }
             },
@@ -50,7 +50,7 @@ module.exports = {
                 settings: {
                     optimizer: {
                         enabled: true,
-                        runs: 100
+                        runs: 2**32 - 1
                     }
                 }
             },
@@ -77,7 +77,7 @@ module.exports = {
                 settings: {
                     optimizer: {
                         enabled: true,
-                        runs: 100
+                        runs: 2**32 - 1
                     }
                 }
             }
@@ -85,10 +85,9 @@ module.exports = {
     },
     networks: {
         hardhat: {
-            gas: 12000000,  // tx gas limit
-            blockGasLimit: 0x1fffffffffffff,
-            blockGasLimit: 12500000,
-            gasPrice: 30537197095,
+            gas: 8 * 10 ** 6,  // tx gas limit
+            blockGasLimit: 8 * 10 ** 6, // Avalanche Gas Limit (added by @RoboYeti)
+            gasPrice: 50537197095,
             allowUnlimitedContractSize: true,
             chainId: 1,
             // Uncomment when running normal tests, and comment when forking. set enabled to true
@@ -142,12 +141,18 @@ module.exports = {
         port: 8545
     },
     gasReporter: {
-        enabled: (process.env.REPORT_GAS) ? true : false
+        enabled: false,
+        // enabled: (process.env.REPORT_GAS) ? true : false,
+        currency: 'USD',
+        token: 'AVAX',
+        coinmarketcap: process.env.COINMARKETCAP_KEY,
+        gasPriceApi: "https://api.snowtrace.io/api?module=proxy&action=eth_gasPrice",
+        onlyCalledMethods: true
     },
     contractSizer: {
         alphaSort: false,
         disambiguatePaths: false,
-        runOnCompile: false,
+        runOnCompile: true,
         strict: false
     }
 };

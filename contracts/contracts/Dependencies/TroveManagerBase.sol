@@ -10,48 +10,21 @@ import "../Interfaces/ISortedTroves.sol";
 import "../Interfaces/IYETIToken.sol";
 import "../Interfaces/ISYETI.sol";
 import "../Interfaces/IActivePool.sol";
-import "../Interfaces/IWhitelist.sol";
 import "../Interfaces/ITroveManagerLiquidations.sol";
 import "../Interfaces/ITroveManagerRedemptions.sol";
 import "./LiquityBase.sol";
 import "./Ownable.sol";
-import "./CheckContract.sol";
 
 /** 
  * Contains shared functionality of TroveManagerLiquidations, TroveManagerRedemptions, and TroveManager. 
  * Keeps addresses to cache, events, structs, status, etc. Also keeps Trove struct. 
  */
 
-contract TroveManagerBase is LiquityBase, Ownable, CheckContract {
+contract TroveManagerBase is LiquityBase, Ownable {
 
     // --- Connected contract declarations ---
 
-    address public borrowerOperationsAddress;
-
-    IStabilityPool stabilityPoolContract;
-
-    ITroveManager public troveManager;
-
-    IYUSDToken yusdTokenContract;
-
-    IYETIToken yetiTokenContract;
-
-    ISYETI sYETIContract;
-
-    ITroveManagerRedemptions troveManagerRedemptions;
-
-    ITroveManagerLiquidations troveManagerLiquidations;
-
-    address gasPoolAddress;
-
-    address public troveManagerAddress;
-    address public troveManagerRedemptionsAddress;
-    address public troveManagerLiquidationsAddress;
-
     // A doubly linked list of Troves, sorted by their sorted by their individual collateral ratios
-    ISortedTroves public sortedTroves;
-
-    ICollSurplusPool collSurplusPool;
 
     struct ContractsCache {
         IActivePool activePool;
@@ -93,16 +66,6 @@ contract TroveManagerBase is LiquityBase, Ownable, CheckContract {
         uint128 arrayIndex;
     }
 
-    event BorrowerOperationsAddressChanged(address _newBorrowerOperationsAddress);
-    event YUSDTokenAddressChanged(address _newYUSDTokenAddress);
-    event ActivePoolAddressChanged(address _activePoolAddress);
-    event DefaultPoolAddressChanged(address _defaultPoolAddress);
-    event StabilityPoolAddressChanged(address _stabilityPoolAddress);
-    event GasPoolAddressChanged(address _gasPoolAddress);
-    event CollSurplusPoolAddressChanged(address _collSurplusPoolAddress);
-    event SortedTrovesAddressChanged(address _sortedTrovesAddress);
-    event YETITokenAddressChanged(address _yetiTokenAddress);
-    event SYETIAddressChanged(address _sYETIAddress);
 
     event TroveUpdated(address indexed _borrower, uint _debt, address[] _tokens, uint[] _amounts, TroveManagerOperation operation);
 }

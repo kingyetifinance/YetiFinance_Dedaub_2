@@ -55,11 +55,11 @@ contract YUSDToken is CheckContract, IYUSDToken {
     mapping (address => mapping (address => uint256)) private _allowances;  
     
     // --- Addresses ---
-    address public immutable troveManagerAddress;
-    address public immutable troveManagerLiquidationsAddress;
-    address public immutable troveManagerRedemptionsAddress;
-    address public immutable stabilityPoolAddress;
-    address public immutable borrowerOperationsAddress;
+    address internal immutable troveManagerAddress;
+    address internal immutable troveManagerLiquidationsAddress;
+    address internal immutable troveManagerRedemptionsAddress;
+    address internal immutable stabilityPoolAddress;
+    address internal immutable borrowerOperationsAddress;
     
     // --- Events ---
     event TroveManagerAddressChanged(address _troveManagerAddress);
@@ -202,7 +202,7 @@ contract YUSDToken is CheckContract, IYUSDToken {
                          _PERMIT_TYPEHASH, owner, spender, amount, 
                          _nonces[owner]++, deadline))));
         address recoveredAddress = ecrecover(digest, v, r, s);
-        require(recoveredAddress == owner, 'YUSD: invalid signature');
+        require(recoveredAddress == owner || recoveredAddress != address(0) , 'YUSD: invalid signature');
         _approve(owner, spender, amount);
     }
 
@@ -226,33 +226,33 @@ contract YUSDToken is CheckContract, IYUSDToken {
     // Warning: sanity checks (for sender and recipient) should have been done before calling these internal functions
 
     function _transfer(address sender, address recipient, uint256 amount) internal {
-        assert(sender != address(0));
-        assert(recipient != address(0));
+        require(sender != address(0), "_transfer: sender is address(0)");
+        require(recipient != address(0), "_transfer: recipient is 0address");
 
-        _balances[sender] = _balances[sender].sub(amount, "ERC20: transfer amount exceeds balance");
+        _balances[sender] = _balances[sender].sub(amount, "ERC20: transfer amount > balance");
         _balances[recipient] = _balances[recipient].add(amount);
         emit Transfer(sender, recipient, amount);
     }
 
     function _mint(address account, uint256 amount) internal {
-        assert(account != address(0));
+        require(account != address(0), "_mint: account is address(0)");
 
         _totalSupply = _totalSupply.add(amount);
-        _balances[account] = _balances[account].add(amount);
+        _balances[account] = _balances[account] + amount; 
         emit Transfer(address(0), account, amount);
     }
 
     function _burn(address account, uint256 amount) internal {
-        assert(account != address(0));
+        require(account != address(0), "_burn: account is address(0)");
         
-        _balances[account] = _balances[account].sub(amount, "ERC20: burn amount exceeds balance");
-        _totalSupply = _totalSupply.sub(amount);
+        _balances[account] = _balances[account].sub(amount, "ERC20: burn amount > balance");
+        _totalSupply = _totalSupply - amount; // can't underflow since indiv balance didn't
         emit Transfer(account, address(0), amount);
     }
 
     function _approve(address owner, address spender, uint256 amount) internal {
-        assert(owner != address(0));
-        assert(spender != address(0));
+        require(owner != address(0), "_approve: owner is address(0)");
+        require(spender != address(0), "_approve: spender is address(0)");
 
         _allowances[owner][spender] = amount;
         emit Approval(owner, spender, amount);

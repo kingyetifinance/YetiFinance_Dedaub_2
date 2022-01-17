@@ -52,9 +52,9 @@ contract YETIToken is CheckContract, IYETIToken {
 
     // --- ERC20 Data ---
 
-    string constant internal _NAME = "YETI";
-    string constant internal _SYMBOL = "YETI";
-    string constant internal _VERSION = "1";
+    bytes32 constant internal _NAME = "YETI";
+    bytes32 constant internal _SYMBOL = "YETI";
+    bytes32 constant internal _VERSION = "1";
     uint8 constant internal  _DECIMALS = 18;
 
     mapping (address => uint256) private _balances;

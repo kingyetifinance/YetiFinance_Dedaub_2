@@ -15,10 +15,10 @@ import "./Dependencies/CheckContract.sol";
  */
 
 contract HintHelpers is LiquityBase, Ownable, CheckContract {
-    string constant public NAME = "HintHelpers";
+    bytes32 constant public NAME = "HintHelpers";
 
-    ISortedTroves public sortedTroves;
-    ITroveManager public troveManager;
+    ISortedTroves internal sortedTroves;
+    ITroveManager internal troveManager;
 
     // --- Events ---
 
@@ -97,7 +97,7 @@ contract HintHelpers is LiquityBase, Ownable, CheckContract {
             _maxIterations = uint(-1);
         }
 
-        while (currentTroveuser != address(0) && remainingYUSD > 0 && _maxIterations-- > 0) {
+        while (currentTroveuser != address(0) && remainingYUSD != 0 && _maxIterations-- != 0) {
             uint netYUSDDebt = _getNetDebt(troveManager.getTroveDebt(currentTroveuser))
                 .add(troveManager.getPendingYUSDDebtReward(currentTroveuser));
 
@@ -136,14 +136,14 @@ contract HintHelpers is LiquityBase, Ownable, CheckContract {
         uint baseLot = _YUSDAmount.mul(DECIMAL_PRECISION);
 
         // redemption addresses are the same as coll addresses for trove
-        for (uint256 i = 0; i < colls.tokens.length; i++) {
+        uint256 tokensLen = colls.tokens.length;
+        for (uint256 i; i < tokensLen; ++i) {
             uint tokenAmount = colls.amounts[i];
             uint tokenAmountToRedeem = baseLot.mul(tokenAmount).div(totalCollUSD).div(DECIMAL_PRECISION);
             finalAmounts[i] = tokenAmount.sub(tokenAmountToRedeem);
         }
 
         newCollVC = _getVC(colls.tokens, finalAmounts);
-        return newCollVC;
     }
 
 
@@ -187,7 +187,7 @@ contract HintHelpers is LiquityBase, Ownable, CheckContract {
                 diff = currentDiff;
                 hintAddress = currentAddress;
             }
-            i++;
+            ++i;
         }
     }
 }

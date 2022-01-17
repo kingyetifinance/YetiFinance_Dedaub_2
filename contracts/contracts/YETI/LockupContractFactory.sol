@@ -26,7 +26,7 @@ contract LockupContractFactory is ILockupContractFactory, Ownable, CheckContract
     using SafeMath for uint;
 
     // --- Data ---
-    string constant public NAME = "LockupContractFactory";
+    bytes32 constant public NAME = "LockupContractFactory";
 
     uint constant public SECONDS_IN_ONE_YEAR = 31536000;
 

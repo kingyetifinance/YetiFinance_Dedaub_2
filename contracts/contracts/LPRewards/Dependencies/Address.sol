@@ -31,7 +31,7 @@ library Address {
         uint256 size;
         // solhint-disable-next-line no-inline-assembly
         assembly { size := extcodesize(account) }
-        return size > 0;
+        return size != 0;
     }
 
     /**
@@ -149,7 +149,7 @@ library Address {
             return returndata;
         } else {
             // Look for revert reason and bubble it up if present
-            if (returndata.length > 0) {
+            if (returndata.length != 0) {
                 // The easiest way to bubble the revert reason is using memory via assembly
 
                 // solhint-disable-next-line no-inline-assembly

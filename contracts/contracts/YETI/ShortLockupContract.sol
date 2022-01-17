@@ -3,30 +3,26 @@
 pragma solidity 0.6.11;
 
 import "../Dependencies/SafeMath.sol";
+import "../Dependencies/SafeERC20.sol";
 import "../Interfaces/IYETIToken.sol";
 
 /*
 * The lockup contract architecture utilizes a single LockupContract, with an unlockTime. The unlockTime is passed as an argument 
 * to the LockupContract's constructor. The contract's balance can be withdrawn by the beneficiary when block.timestamp > unlockTime. 
 * At construction, the contract checks that unlockTime is at least one year later than the Liquity system's deployment time. 
-
-* Within the first year from deployment, the deployer of the YETIToken (Liquity AG's address) may transfer YETI only to valid
-* LockupContracts, and no other addresses (this is enforced in YETIToken.sol's transfer() function).
-* 
-* The above two restrictions ensure that until one year after system deployment, YETI tokens originating from Liquity AG cannot
-* enter circulating supply and cannot be staked to earn system revenue.
 */
 contract ShortLockupContract {
     using SafeMath for uint;
+    using SafeERC20 for IYETIToken;
 
     // --- Data ---
-    string constant public NAME = "LockupContract";
+    bytes32 constant public NAME = "LockupContract";
 
     uint constant public SECONDS_IN_ONE_YEAR = 31536000;
 
     address public immutable beneficiary;
 
-    IYETIToken public yetiToken;
+    IYETIToken public immutable yetiToken;
 
     // Unlock time is the Unix point in time at which the beneficiary can withdraw.
     uint public unlockTime;
@@ -64,7 +60,7 @@ contract ShortLockupContract {
 
         IYETIToken yetiTokenCached = yetiToken;
         uint YETIBalance = yetiTokenCached.balanceOf(address(this));
-        yetiTokenCached.transfer(beneficiary, YETIBalance);
+        yetiTokenCached.safeTransfer(beneficiary, YETIBalance);
         emit LockupContractEmptied(YETIBalance);
     }
 

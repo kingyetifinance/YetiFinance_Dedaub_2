@@ -69,13 +69,9 @@ interface ITroveManager is ILiquityBase {
 
     function getTroveFromTroveOwnersArray(uint _index) external view returns (address);
 
-//    function getNominalICR(address _borrower) external view returns (uint);
-
     function getCurrentICR(address _borrower) external view returns (uint);
 
     function liquidate(address _borrower) external;
-
-//    function liquidateTroves(uint _n) external;
 
     function batchLiquidateTroves(address[] calldata _troveArray, address _liquidator) external;
 
@@ -87,8 +83,7 @@ interface ITroveManager is ILiquityBase {
         address _lowerPartialRedemptionHint,
         uint _partialRedemptionHintNICR,
         uint _maxIterations
-        // uint _maxFee
-    ) external; 
+    ) external;
 
     function updateStakeAndTotalStakes(address _borrower) external;
 
@@ -135,6 +130,8 @@ interface ITroveManager is ILiquityBase {
     function decayBaseRateFromBorrowing() external;
 
     function getTroveStatus(address _borrower) external view returns (uint);
+
+    function isTroveActive(address _borrower) external view returns (bool);
 
     function getTroveStake(address _borrower, address _token) external view returns (uint);
 

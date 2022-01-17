@@ -1,5 +1,5 @@
 pragma solidity 0.8.7;
-import "./IERC20_8.sol";
+
 import "./IRewarder.sol";
 
 

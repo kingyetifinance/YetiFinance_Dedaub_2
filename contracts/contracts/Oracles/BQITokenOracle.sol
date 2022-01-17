@@ -5,7 +5,7 @@ pragma solidity 0.6.11;
 import '../Dependencies/SafeMath.sol';
 
 import '../Interfaces/IBaseOracle.sol';
-import '../Interfaces/IPriceFeed.sol';
+
 import "../Dependencies/Ownable.sol";
 
 interface IQIToken {

@@ -94,6 +94,18 @@ contract('WAssetTroveManagerTests', async accounts => {
     yusdToken = contracts.yusdToken;
     stabilityPool = contracts.stabilityPool;
     treasury = YETIContracts.yetiFinanceTreasury;
+    await contracts.priceFeedJLP.setPrice(toBN(dec(200, 18)).toString())
+  })
+
+  afterEach(async () => {
+    const aliceJLPBalance = await jlp.balanceOf(alice)
+    const harryJLPBalance = await jlp.balanceOf(harry)
+    const aliceWJLPBalance = await WJLP.balanceOf(alice)
+    const harryWJLPBalance = await WJLP.balanceOf(harry)
+    await jlp.connect(await hre.ethers.getSigner(alice)).transfer(zeroAddress, aliceJLPBalance)
+    await jlp.connect(await hre.ethers.getSigner(harry)).transfer(zeroAddress, harryJLPBalance)
+    await WJLP.transfer(zeroAddress, aliceWJLPBalance, { from: alice })
+    await WJLP.transfer(zeroAddress, harryWJLPBalance, { from: harry })
   })
 
     it('wrap WAVAX', async() => {
@@ -119,11 +131,19 @@ contract('WAssetTroveManagerTests', async accounts => {
         await approveJLP(harry, amount, WJLP.address)
 
         const initialWJLPBalance = await WJLP.balanceOf(harry);
-        await WJLP.wrap(amount, harry, harry, harry);
+        await WJLP.wrap(amount, harry, harry, harry, {from: harry});
         const finalWJLPBalance = await WJLP.balanceOf(harry);
 
         assert.equal(initialWJLPBalance.toString(), "0");
         assert.equal(finalWJLPBalance.toString(), amount);
+    })
+
+    it("Wrapping for someone else reverts when not called by borrower operations", async() => {
+      const amount = await zapForWAVAX_WETH_JLP(harry, "100000")
+      await approveJLP(harry, amount, WJLP.address)
+
+      await assertRevert(WJLP.wrap(amount, harry, alice, alice, {from: alice}), 
+      "Should have reverted since alice called wrap for harry")
     })
 
     // TODO test out that WAsset rewards increase after fast forwarding time
@@ -133,7 +153,13 @@ contract('WAssetTroveManagerTests', async accounts => {
 
       await approveJLP(harry, amount, WJLP.address)
 
-      await WJLP.wrap(amount, harry, harry, harry);
+      // await WJLP.wrap(amount, harry, harry);
+
+      // th.test opens a trove with WJLP as collateral for harry
+      await th.test(contracts, harry, WJLP.address, amount)
+      // alice opens a large trove with WETH collateral and a large debt position
+      await th.openTrove(contracts, { ICR: toBN(dec(2, 18)), extraYUSDAmount: toBN(dec(2, 25)), extraParams: { from: alice } })
+
 
       let harryRewards = await WJLP.getUserInfo(harry);
       let treasuryRewardsInit = await WJLP.getUserInfo(treasury.address);
@@ -142,24 +168,22 @@ contract('WAssetTroveManagerTests', async accounts => {
       // treasury is credited to be earning JOE on 0 staked LP tokens
       assert.equal(treasuryRewardsInit["0"].toString(), "0")
 
+
       // fastforward time
       await ethers.provider.send('evm_increaseTime', [2592000]);
       await ethers.provider.send('evm_mine');
 
-      let pendingJOERewardsHarry = await WJLP.getPendingRewards(harry);
-      console.log(pendingJOERewardsHarry);
-      // assert.isTrue(pendingJOERewardsHarry.gt(toBN("0")));
+      // let pendingJOERewardsHarry = await WJLP.getPendingRewards(harry);
+      // console.log(pendingJOERewardsHarry);
+      // assert.isTrue((pendingJOERewardsHarry)[1][0].gt(toBN("0")));
 
-      await WJLP.approve(borrowerOperations.address, amount, {from: harry})
+      // await WJLP.approve(borrowerOperations.address, amount, {from: harry})
 
-      const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
-      console.log("Amount:", amount.toString());
-      console.log("VC:", val.toString());
+      // const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
+      // console.log("Amount:", amount.toString());
+      // console.log("VC:", val.toString());
 
-      // th.test opens a trove with WJLP as collateral for harry
-      await th.test(contracts, harry, WJLP.address, amount)
-      // alice opens a large trove with WETH collateral and a large debt position
-      await th.openTrove(contracts, { ICR: toBN(dec(2, 18)), extraYUSDAmount: toBN(dec(2, 25)), extraParams: { from: alice } })
+
       const YUSDBalance = await yusdToken.balanceOf(alice);
       await stabilityPool.provideToSP(YUSDBalance, zeroAddress, {from: alice});
 
@@ -223,27 +247,27 @@ contract('WAssetTroveManagerTests', async accounts => {
     })
 
     // TODO: write this test
-    it.only("open trove and liquidate-redistribution", async () => {
+    xit("open trove and liquidate-redistribution", async () => {
       const minDebt = await contracts.borrowerOperations.MIN_NET_DEBT()
       const amount = await zapForWAVAX_WETH_JLP(harry, minDebt)
 
       await approveJLP(harry, amount, WJLP.address)
 
-      await WJLP.wrap(amount, harry, harry, harry);
+      // await WJLP.wrap(amount, harry, harry, harry);
 
-      let harryRewards = await WJLP.getUserInfo(harry);
-      let treasuryRewardsInit = await WJLP.getUserInfo(treasury.address);
-      // Harry is credited to be earning JOE on amount of staked LP tokens
-      assert.equal(harryRewards["0"].toString(), amount.toString())
-      // treasury is credited to be earning JOE on 0 staked LP tokens
-      assert.equal(treasuryRewardsInit["0"].toString(), "0")
+      // let harryRewards = await WJLP.getUserInfo(harry);
+      // let treasuryRewardsInit = await WJLP.getUserInfo(treasury.address);
+      // // Harry is credited to be earning JOE on amount of staked LP tokens
+      // assert.equal(harryRewards["0"].toString(), amount.toString())
+      // // treasury is credited to be earning JOE on 0 staked LP tokens
+      // assert.equal(treasuryRewardsInit["0"].toString(), "0")
 
 
-      await WJLP.approve(borrowerOperations.address, amount, {from: harry})
+      // await WJLP.approve(borrowerOperations.address, amount, {from: harry})
 
-      const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
-      console.log("Amount:", amount.toString());
-      console.log("VC:", val.toString());
+      // const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
+      // console.log("Amount:", amount.toString());
+      // console.log("VC:", val.toString());
 
       // th.test opens a trove with WJLP as collateral for harry
       await th.test(contracts, harry, WJLP.address, amount)
@@ -319,20 +343,20 @@ contract('WAssetTroveManagerTests', async accounts => {
       const amount = await zapForWAVAX_WETH_JLP(harry, minDebt)
       await approveJLP(harry, amount, WJLP.address)
 
-      await WJLP.wrap(amount, harry, harry, harry);
+      // await WJLP.wrap(amount, harry, harry, harry);
 
-      let harryRewards = await WJLP.getUserInfo(harry);
-      let treasuryRewardsInit = await WJLP.getUserInfo(treasury.address);
-      // Harry is credited to be earning JOE on amount of staked LP tokens
-      assert.equal(harryRewards["0"].toString(), amount.toString())
-      // treasury is credited to be earning JOE on 0 staked LP tokens
-      assert.equal(treasuryRewardsInit["0"].toString(), "0")
+      // let harryRewards = await WJLP.getUserInfo(harry);
+      // let treasuryRewardsInit = await WJLP.getUserInfo(treasury.address);
+      // // Harry is credited to be earning JOE on amount of staked LP tokens
+      // assert.equal(harryRewards["0"].toString(), amount.toString())
+      // // treasury is credited to be earning JOE on 0 staked LP tokens
+      // assert.equal(treasuryRewardsInit["0"].toString(), "0")
 
-      await WJLP.approve(borrowerOperations.address, amount, {from: harry})
+      // await WJLP.approve(borrowerOperations.address, amount, {from: harry})
 
-      const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
-      console.log("Amount:", amount.toString());
-      console.log("VC:", val.toString());
+      // const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
+      // console.log("Amount:", amount.toString());
+      // console.log("VC:", val.toString());
 
       // th.test opens a trove with WJLP as collateral for harry. Open with more debt.
       await th.test(contracts, harry, WJLP.address, amount)
@@ -366,20 +390,20 @@ contract('WAssetTroveManagerTests', async accounts => {
       const amount = await zapForWAVAX_WETH_JLP(harry, minDebt)
       await approveJLP(harry, amount, WJLP.address)
 
-      await WJLP.wrap(amount, harry, harry, harry);
+      // await WJLP.wrap(amount, harry, harry, harry);
 
-      let harryRewards = await WJLP.getUserInfo(harry);
-      let treasuryRewardsInit = await WJLP.getUserInfo(treasury.address);
-      // Harry is credited to be earning JOE on amount of staked LP tokens
-      assert.equal(harryRewards["0"].toString(), amount.toString())
-      // treasury is credited to be earning JOE on 0 staked LP tokens
-      assert.equal(treasuryRewardsInit["0"].toString(), "0")
+      // let harryRewards = await WJLP.getUserInfo(harry);
+      // let treasuryRewardsInit = await WJLP.getUserInfo(treasury.address);
+      // // Harry is credited to be earning JOE on amount of staked LP tokens
+      // assert.equal(harryRewards["0"].toString(), amount.toString())
+      // // treasury is credited to be earning JOE on 0 staked LP tokens
+      // assert.equal(treasuryRewardsInit["0"].toString(), "0")
 
-      await WJLP.approve(borrowerOperations.address, amount, {from: harry})
+      // await WJLP.approve(borrowerOperations.address, amount, {from: harry})
 
-      const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
-      console.log("Amount:", amount.toString());
-      console.log("VC:", val.toString());
+      // const val = await contracts.whitelist.getValueVC(WJLP.address, amount)
+      // console.log("Amount:", amount.toString());
+      // console.log("VC:", val.toString());
 
       // th.test opens a trove with WJLP as collateral for harry. Open with more debt.
       await th.test(contracts, harry, WJLP.address, amount)
@@ -413,9 +437,65 @@ contract('WAssetTroveManagerTests', async accounts => {
       // all should be pulled out
       assert.isTrue(ActivePoolWJLPAfter.toString() == "0")
       // Alice should have the correct JLP, unwrapped
+      console.log("Alice jlp after", AliceJLPAfter.toString())
       assert.isTrue(AliceJLPAfter.toString() == expectedJLPPulled.toString())//.eq(toBN(dec(10, 18)))) // 200 * 10 = 2000. Should have that much JLP.
       //Harry should have less rewards
       assert.isTrue(harryRewardsFinal[0].eq(amount.sub(expectedJLPPulled)))
+    })
+
+    // it("Should revert when the balance is not the same as reward balance", async() => {
+    //   const minDebt = await contracts.borrowerOperations.MIN_NET_DEBT()
+    //   const amount = await zapForWAVAX_WETH_JLP(harry, minDebt)
+    //   await approveJLP(harry, amount, WJLP.address)
+
+    //   await assertRevert( th.test(contracts, harry, WJLP.address, amount), "Should revert since not enough reward balance")
+    // })
+
+    it.only("Tests multiple borrowers interacting with WJLP and adjusting trove with wjlp", async () => {
+      const minDebt = await contracts.borrowerOperations.MIN_NET_DEBT()
+      const amount = await zapForWAVAX_WETH_JLP(harry, minDebt)
+      const harryJLPBalance = await jlp.balanceOf(harry)
+      await jlp.connect(await hre.ethers.getSigner(harry)).transfer(alice, harryJLPBalance)
+      const amount2 = await zapForWAVAX_WETH_JLP(harry, minDebt)
+      
+      
+      // await zapForWAVAX_WETH_JLP(alice, minDebt)
+      await approveJLP(harry, amount2, WJLP.address)
+      
+      await th.test(contracts, harry, WJLP.address, amount2)
+      await approveJLP(alice, amount, WJLP.address)
+      await contracts.weth.mint(alice, toBN(dec(20, 18)))
+      await contracts.weth.approve(contracts.borrowerOperations.address, toBN(dec(20, 18)), { from: alice })
+      await contracts.borrowerOperations.openTrove(
+        th._100pct,
+        th.toBN(dec(2000, 18)),
+        th.ZERO_ADDRESS,
+        th.ZERO_ADDRESS,
+        [WJLP.address, weth.address], [amount.toString(), toBN(dec(20, 18))],
+        { from: alice }
+        )
+
+      // harry try to adjust trove 
+      const amount3 = await zapForWAVAX_WETH_JLP(harry, minDebt)
+      await approveJLP(harry, amount3, WJLP.address)
+      await contracts.borrowerOperations.adjustTrove(
+        [WJLP.address], [amount3.toString()], [], [], "0", false, harry, harry, th._100pct, { from: harry }
+      )
+      const harryBalanceBefore = await jlp.balanceOf(harry)
+      // Try to withdraw some manually, then check raw balance. 
+      await contracts.borrowerOperations.withdrawColl([WJLP.address], [dec(1, 18)], harry, harry, {from: harry})
+      const harryBalanceAfter = await jlp.balanceOf(harry)
+      assert.isTrue(harryBalanceAfter.toString() == dec(1, 18))
+
+      let harryRewards = await WJLP.getUserInfo(harry);
+      let aliceRewards = await WJLP.getUserInfo(alice);
+      assert.isTrue(harryRewards[0].toString() == amount3.add(amount2).sub(toBN(dec(1, 18))).toString())
+      assert.isTrue(aliceRewards[0].toString() == amount.toString())
+
+      await contracts.yusdToken.transfer(harry, toBN(dec(1000, 18)), { from: alice })
+      await contracts.borrowerOperations.closeTrove( {from: harry} )
+      const harryBalanceFinal = await jlp.balanceOf(harry)
+      assert.isTrue(harryBalanceFinal.toString() == (amount3.add(amount2)).toString())
     })
 
     // it("redemption", async () => {

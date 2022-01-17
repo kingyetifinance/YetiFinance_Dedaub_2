@@ -16,7 +16,7 @@
      using SafeMath for uint;
 
      // --- Data ---
-     string constant public NAME = "YETIStaking";
+     bytes32 constant public NAME = "YETIStaking";
 
      mapping( address => uint) public stakes;
      uint public totalYETIStaked;
@@ -140,7 +140,7 @@
         
          _updateUserSnapshots(msg.sender);
 
-         if (_YETIamount > 0) {
+         if (_YETIamount != 0) {
              uint YETIToWithdraw = LiquityMath._min(_YETIamount, currentStake);
 
              uint newStake = currentStake.sub(YETIToWithdraw);
@@ -168,7 +168,7 @@
          _requireCallerIsTroveManager();
          uint ETHFeePerYETIStaked;
      
-         if (totalYETIStaked > 0) {ETHFeePerYETIStaked = _ETHFee.mul(DECIMAL_PRECISION).div(totalYETIStaked);}
+         if (totalYETIStaked != 0) {ETHFeePerYETIStaked = _ETHFee.mul(DECIMAL_PRECISION).div(totalYETIStaked);}
 
          F_ETH = F_ETH.add(ETHFeePerYETIStaked);
          emit F_ETHUpdated(F_ETH);
@@ -178,7 +178,7 @@
          _requireCallerIsBOOrTM();
          uint YUSDFeePerYETIStaked;
         
-         if (totalYETIStaked > 0) {YUSDFeePerYETIStaked = _YUSDFee.mul(DECIMAL_PRECISION).div(totalYETIStaked);}
+         if (totalYETIStaked != 0) {YUSDFeePerYETIStaked = _YUSDFee.mul(DECIMAL_PRECISION).div(totalYETIStaked);}
         
          F_YUSD = F_YUSD.add(YUSDFeePerYETIStaked);
          emit F_YUSDUpdated(F_YUSD);
@@ -237,11 +237,11 @@
      }
 
      function _requireUserHasStake(uint currentStake) internal pure {
-         require(currentStake > 0, 'YETIStaking: User must have a non-zero stake');
+         require(currentStake != 0, 'YETIStaking: User must have a non-zero stake');
      }
 
      function _requireNonZeroAmount(uint _amount) internal pure {
-         require(_amount > 0, 'YETIStaking: Amount must be non-zero');
+         require(_amount != 0, 'YETIStaking: Amount must be non-zero');
      }
 
      receive() external payable {

@@ -89,11 +89,11 @@ contract EchidnaTester {
             address(troveManagerLiquidations), address(troveManagerRedemptions), address(collSurplusPool)
         );
 
-        defaultPool.setAddresses(address(troveManager), address(activePool), address(whitelist), address(0)); // todo
+        defaultPool.setAddresses(address(troveManager), address(activePool), address(whitelist), address(0));
         
         stabilityPool.setAddresses(address(borrowerOperations), 
             address(troveManager), address(activePool), address(yusdToken), 
-            address(sortedTroves), address(0), address(0), address(troveManagerLiquidations)); // TODO set this 
+            address(sortedTroves), address(0), address(0), address(troveManagerLiquidations)); 
 
         collSurplusPool.setAddresses(address(borrowerOperations), 
              address(troveManager), address(troveManagerRedemptions), address(activePool), address(whitelist));
@@ -103,21 +103,21 @@ contract EchidnaTester {
         for (uint i = 0; i < NUMBER_OF_ACTORS; i++) {
             echidnaProxies[i] = new EchidnaProxy(troveManager, borrowerOperations, stabilityPool, yusdToken);
             (bool success, ) = address(echidnaProxies[i]).call{value: INITIAL_BALANCE}("");
-            require(success);
+            require(success, "proxy called failed");
         }
 
         MCR = borrowerOperations.MCR();
         CCR = borrowerOperations.CCR();
         YUSD_GAS_COMPENSATION = borrowerOperations.YUSD_GAS_COMPENSATION();
-        require(MCR > 0);
-        require(CCR > 0);
+        require(MCR != 0, "MCR <= 0");
+        require(CCR != 0, "CCR <= 0");
 
         priceFeedTestnet.setPrice(1e22);
     }
 
     // @KingYeti: added this helper function
     function _getVC(address[] memory _tokens, uint[] memory _amounts) internal view returns (uint totalVC) {
-        require(_tokens.length == _amounts.length);
+        require(_tokens.length == _amounts.length, "_getVC: length mismatch");
         for (uint i = 0; i < _tokens.length; i++) {
             address token = _tokens[i];
             uint tokenVC = whitelist.getValueVC(token, _amounts[i]);
@@ -161,7 +161,7 @@ contract EchidnaTester {
 //
 //    function getAdjustedETH(uint actorBalance, uint _ETH, uint ratio) internal view returns (uint) {
 //        uint price = priceFeedTestnet.getPrice();
-//        require(price > 0);
+//        require(price != 0);
 //        uint minETH = ratio.mul(YUSD_GAS_COMPENSATION).div(price);
 //        require(actorBalance > minETH);
 //        uint ETH = minETH + _ETH % (actorBalance - minETH);
@@ -197,7 +197,7 @@ contract EchidnaTester {
 //        echidnaProxy.openTrovePrx(_tokens, _amounts, YUSDAmount, address(0), address(0), 0);
 //
 //        numberOfTroves = troveManager.getTroveOwnersCount();
-//        assert(numberOfTroves > 0);
+//        assert(numberOfTroves != 0);
 //        // canary
 //        //assert(numberOfTroves == 0);
 //    }
@@ -250,10 +250,8 @@ contract EchidnaTester {
 //        uint ETH = getAdjustedETH(actorBalance, _ETH, MCR);
 //        uint debtChange = _debtChange;
 //        if (_isDebtIncrease) {
-//            // TODO: add current amount already withdrawn:
 //            debtChange = getAdjustedYUSD(ETH, uint(_debtChange), MCR);
 //        }
-//        // TODO: collWithdrawal, debtChange
 //        echidnaProxy.adjustTrovePrx(ETH, _collWithdrawal, debtChange, _isDebtIncrease, address(0), address(0), 0);
 //    }
 //
@@ -321,7 +319,7 @@ contract EchidnaTester {
 //    }
 //
 //    function echidna_canary_active_pool_balance() public view returns(bool) {
-//        if (address(activePool).balance > 0) {
+//        if (address(activePool).balance != 0) {
 //            return false;
 //        }
 //        return true;
@@ -348,7 +346,7 @@ contract EchidnaTester {
 //    /**
 //     * Status
 //     * Minimum debt (gas compensation)
-//     * Stake > 0
+//     * Stake != 0
 //     */
 //    function echidna_trove_properties() public view returns(bool) {
 //        address currentTrove = sortedTroves.getFirst();
@@ -367,7 +365,7 @@ contract EchidnaTester {
 //            // Uncomment to check that the condition is meaningful
 //            //else return false;
 //
-//            // Stake > 0
+//            // Stake != 0
 //            if (troveManager.getTroveStake(currentTrove) == 0) {
 //                return false;
 //            }
@@ -380,11 +378,11 @@ contract EchidnaTester {
 //    }
 //
 //    function echidna_ETH_balances() public view returns(bool) {
-//        if (address(troveManager).balance > 0) {
+//        if (address(troveManager).balance != 0) {
 //            return false;
 //        }
 //
-//        if (address(borrowerOperations).balance > 0) {
+//        if (address(borrowerOperations).balance != 0) {
 //            return false;
 //        }
 //
@@ -400,22 +398,21 @@ contract EchidnaTester {
 //            return false;
 //        }
 //
-//        if (address(yusdToken).balance > 0) {
+//        if (address(yusdToken).balance != 0) {
 //            return false;
 //        }
 //
-//        if (address(priceFeedTestnet).balance > 0) {
+//        if (address(priceFeedTestnet).balance != 0) {
 //            return false;
 //        }
 //
-//        if (address(sortedTroves).balance > 0) {
+//        if (address(sortedTroves).balance != 0) {
 //            return false;
 //        }
 //
 //        return true;
 //    }
 //
-//    // TODO: What should we do with this? Should it be allowed? Should it be a canary?
 //    function echidna_price() public view returns(bool) {
 //        uint price = priceFeedTestnet.getPrice();
 //

@@ -11,7 +11,7 @@ import "./Dependencies/SafeMath.sol";
 import "./Dependencies/Ownable.sol";
 import "./Dependencies/CheckContract.sol";
 import "./Dependencies/YetiCustomBase.sol";
-
+import "./Dependencies/SafeERC20.sol";
 
 /*
  * The Default Pool holds the collateral and YUSD debt (but not YUSD tokens) from liquidations that have been redistributed
@@ -22,13 +22,14 @@ import "./Dependencies/YetiCustomBase.sol";
  */
 contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
     using SafeMath for uint256;
+    using SafeERC20 for IERC20;
 
     string public constant NAME = "DefaultPool";
 
-    address public troveManagerAddress;
-    address public activePoolAddress;
-    address public whitelistAddress;
-    address public yetiFinanceTreasury;
+    address internal troveManagerAddress;
+    address internal activePoolAddress;
+    address internal whitelistAddress;
+    address internal yetiFinanceTreasury;
 
     // deposited collateral tracker. Colls is always the whitelist list of all collateral tokens. Amounts
     newColls internal poolColl;
@@ -81,7 +82,7 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
     /*
      * Returns all collateral balances in state. Not necessarily the contract's actual balances.
      */
-    function getAllCollateral() public view override returns (address[] memory, uint256[] memory) {
+    function getAllCollateral() external view override returns (address[] memory, uint256[] memory) {
         return (poolColl.tokens, poolColl.amounts);
     }
 
@@ -99,14 +100,14 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
      * multiplying them by the corresponding price and ratio and then summing that
      */
     function getVC() external view override returns (uint256 totalVC) {
-        for (uint256 i = 0; i < poolColl.tokens.length; i++) {
+        uint256 tokensLen = poolColl.tokens.length;
+        for (uint256 i; i < tokensLen; ++i) {
             address collateral = poolColl.tokens[i];
             uint256 amount = poolColl.amounts[i];
 
             uint256 collateralVC = whitelist.getValueVC(collateral, amount);
             totalVC = totalVC.add(collateralVC);
         }
-        return totalVC;
     }
 
     // Debt that this pool holds. 
@@ -120,11 +121,10 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
         uint256 index = whitelist.getIndex(_collateral);
         poolColl.amounts[index] = poolColl.amounts[index].sub(_amount);
 
+        IERC20(_collateral).safeTransfer(activePool, _amount);
+
         emit DefaultPoolBalanceUpdated(_collateral, _amount);
         emit CollateralSent(_collateral, activePool, _amount);
-
-        bool success = IERC20(_collateral).transfer(activePool, _amount);
-        require(success, "DefaultPool: sending collateral failed");
     }
 
     // Returns true if all payments were successfully sent. Must be called by borrower operations, trove manager, or stability pool. 
@@ -133,15 +133,33 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
         override
     {
         _requireCallerIsTroveManager();
-        address activePool = activePoolAddress;
-        require(_tokens.length == _amounts.length);
-        for (uint256 i = 0; i < _tokens.length; i++) {
-            _sendCollateral(_tokens[i], _amounts[i]);
-            if (whitelist.isWrapped(_tokens[i])) {
-                IWAsset(_tokens[i]).updateReward(yetiFinanceTreasury, _borrower, _amounts[i]);
+        uint256 tokensLen = _tokens.length;
+        require(tokensLen == _amounts.length, "DP:Length mismatch");
+        uint256 thisAmounts;
+        address thisToken;
+        for (uint256 i; i < tokensLen; ++i) {
+            thisAmounts = _amounts[i];
+            if(thisAmounts != 0) {
+                thisToken = _tokens[i];
+                
+                // If asset is wrapped, then that means it came from the active pool (originally) and we need to update rewards from 
+                // the treasury which would have owned the rewards, to the new borrower who will be accumulating this new 
+                // reward. 
+                if (whitelist.isWrapped(thisToken)) {
+                    // This call claims the tokens for the treasury and also transfers them to the default pool as an intermediary so 
+                    // that it can transfer.
+                    IWAsset(thisToken).endTreasuryReward(address(this), thisAmounts);
+                    // Call transfer
+                    _sendCollateral(thisToken, thisAmounts);
+                    // Then finally transfer rewards to the borrower
+                    IWAsset(thisToken).updateReward(address(this), _borrower, thisAmounts);
+                } else {
+                    // Otherwise just send. 
+                    _sendCollateral(thisToken, thisAmounts);
+                }
             }
         }
-        IActivePool(activePool).receiveCollateral(_tokens, _amounts);
+        IActivePool(activePoolAddress).receiveCollateral(_tokens, _amounts);
     }
 
     // Increases the YUSD Debt of this pool. 
@@ -161,15 +179,25 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
     // --- 'require' functions ---
 
     function _requireCallerIsActivePool() internal view {
-        require(msg.sender == activePoolAddress, "DefaultPool: Caller is not the ActivePool");
+        if (msg.sender != activePoolAddress) {
+            _revertWrongFuncCaller();
+        }
     }
 
     function _requireCallerIsTroveManager() internal view {
-        require(msg.sender == troveManagerAddress, "DefaultPool: Caller is not the TroveManager");
+        if (msg.sender != troveManagerAddress) {
+            _revertWrongFuncCaller();
+        }
     }
 
     function _requireCallerIsWhitelist() internal view {
-        require(msg.sender == whitelistAddress, "DefaultPool: Caller is not whitelist");
+        if (msg.sender != whitelistAddress) {
+            _revertWrongFuncCaller();
+        }
+    }
+
+    function _revertWrongFuncCaller() internal view{
+        revert("DP: External caller not allowed");
     }
 
     // Should be called by ActivePool

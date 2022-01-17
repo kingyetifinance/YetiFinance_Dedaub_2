@@ -62,10 +62,10 @@ contract ERC20_8 is IERC20 {
     // - Owner's account must have sufficient balance to transfer
     // - 0 value transfers are allowed
     // ------------------------------------------------------------------------
-    function transfer(address _to, uint _num_tokens) public override returns (bool success) {
+    function transfer(address _to, uint _num_tokens) public virtual override returns (bool success) {
         require(_num_tokens <= balances[msg.sender], "You are trying to transfer more tokens than you have");
 
-        balances[msg.sender] = balances[msg.sender] - _num_tokens;
+        unchecked { balances[msg.sender] = balances[msg.sender] - _num_tokens; } // pre checked that you have enough tokens
         balances[_to] = balances[_to] + _num_tokens;
         emit Transfer(msg.sender, _to, _num_tokens);
         return true;
@@ -84,7 +84,7 @@ contract ERC20_8 is IERC20 {
         return true;
     }
 
-    function increaseAllowance(address spender, uint256 addedValue) external returns (bool) {
+    function increaseAllowance(address spender, uint256 addedValue) external override returns (bool) {
         _approve(msg.sender, spender, allowed[msg.sender][spender] + addedValue);
         return true;
     }
@@ -109,7 +109,7 @@ contract ERC20_8 is IERC20 {
     // - Spender must have sufficient allowance to transfer
     // - 0 value transfers are allowed
     // ------------------------------------------------------------------------
-    function transferFrom(address _from, address _to, uint _amount) public override returns (bool success) {
+    function transferFrom(address _from, address _to, uint _amount) public virtual override returns (bool success) {
         return _transferFrom(_from, _to, _amount);
     }
 

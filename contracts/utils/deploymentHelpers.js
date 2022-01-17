@@ -41,6 +41,7 @@ const Unipool =  artifacts.require("./Unipool.sol")
 const WJLP = artifacts.require("./AssetWrappers/WJLP.sol");
 const WBQI = artifacts.require("./AssetWrappers/WBQI.sol");
 const WAAVE = artifacts.require("./AssetWrappers/WAAVE.sol");
+const WCRV = artifacts.require("./AssetWrappers/WCRV.sol");
 
 const YETITokenTester = artifacts.require("./YETITokenTester.sol")
 const CommunityIssuanceTester = artifacts.require("./CommunityIssuanceTester.sol")
@@ -113,10 +114,26 @@ class DeploymentHelper {
           18,
           "0xDFE521292EcE2A4f44242efBcD66Bc594CA9714B",
         )
+    const wCRV_3crv = await WCRV.new(
+          "wCRV_3crv",
+          "Wrapped 3crv",
+          18,
+          "0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664", //USDC.e is the swapoutput
+          "0x7f90122BF0700F9E7e1F688fe926940E8839F353", //3CRV pool
+          "0x1337BedC9D22ecbe766dF105c9623922A27963EC", //3CRV token
+          // reward tokens and corresponding routing to get from token -> usdc.e
+          [{"token":"0x47536F17F4fF30e64A96a7555826b8f9e66ec468", "swapPath":["0x47536F17F4fF30e64A96a7555826b8f9e66ec468","0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", "0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664"], "minAmt":"100000000000000000"}, 
+          {"token":"0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", "swapPath":["0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", "0xA7D7079b0FEaD91F3e65f86E8915Cb59c1a4C664"], "minAmt":"100000000000000000"}],
+          "0x5B5CFE992AdAC0C9D48E05854B2d91C73a003858", //CRV gauge address
+          "0x60aE616a2155Ee3d9A68541Ba4544862310933d4", //Joerouter
+          3, //3 coins in 3crv
+          1, //USDC is index 1
+        )
     const WRAPPERS={
       wJLP_WETH_WAVAX,
       wBQI_WAVAX,
-      wAAVE_WAVAX
+      wAAVE_WAVAX,
+      wCRV_3crv
     }
     return WRAPPERS
   }
@@ -655,7 +672,9 @@ class DeploymentHelper {
       contracts.troveManagerRedemptions.address,
       contracts.defaultPool.address,
       contracts.stabilityPool.address,
-      YETIContracts.yetiFinanceTreasury.address
+      YETIContracts.yetiFinanceTreasury.address,
+      contracts.borrowerOperations.address,
+      contracts.collSurplusPool.address
     )
 
     await contracts.PriceCurveAVAX.setAddresses(contracts.whitelist.address)
@@ -670,7 +689,20 @@ class DeploymentHelper {
     await contracts.whitelist.addCollateral(contracts.weth.address, "1000000000000000000", contracts.priceFeedETH.address, 18, contracts.PriceCurveETH.address, false, newERC20Router.address);
     await contracts.whitelist.addCollateral(contracts.wavax.address, "1000000000000000000", contracts.priceFeedAVAX.address, 18, contracts.PriceCurveAVAX.address, false, newERC20Router.address);
     await contracts.whitelist.addCollateral(contracts.wJLP.address, "1000000000000000000", contracts.priceFeedJLP.address, 18, contracts.PriceCurveJLP.address, true, newERC20Router.address);
+    // for (let i = 0; i < 147; i++) {
+    //   let params = {
+    //     name: "Token " + String(i),
+    //     symbol: "Token" + String(i),
+    //     decimals: 18,
+    //     ratio: "1050000000000000000"
+    //   }
+    //
+    //   await this.deployExtraCollateral(contracts, params)
+    // }
+    // @RoboYeti: added 150 collaterals in the system.
+    // Can run everything all tests and see if any gas issues pop up
   }
+
 
   // Deploys a new whitelist collateral. 
   // Creates a corresponding price feed, price curve, adjusts the params, and adds it to the whitelist.
@@ -678,10 +710,10 @@ class DeploymentHelper {
   static async deployExtraCollateral(contracts, params) {
 
     const {
-      name, 
+      name,
       symbol,
       decimals,
-      ratio, 
+      ratio,
     } = params
 
     const newToken = await ERC20Token.new(symbol, name, decimals);

@@ -72,7 +72,7 @@ contract LPTokenWrapper is ILPTokenWrapper {
  * or first liquidity provider stakes UNIv2 LP tokens into it.
  */
 contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
-    string constant public NAME = "Pool2Unipool";
+    bytes32 constant public NAME = "Pool2Unipool";
 
     uint256 public duration;
     IYETIToken public yetiToken;
@@ -127,7 +127,7 @@ contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
         onlyOwner
     {
         duration = _duration;
-        require(yetiToken.balanceOf(address(this)) > 0, "setReward can only be called once YETI has been allocated to this contract");
+        require(yetiToken.balanceOf(address(this)) != 0, "setReward can only be called once YETI has been allocated to this contract");
         // This function must be commented out as it assumes an allocation already exists
         // for this pool immediately after creation. 
         _notifyRewardAmount(yetiToken.balanceOf(address(this)), _duration);
@@ -165,7 +165,7 @@ contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
 
     // stake visibility is public as overriding LPTokenWrapper's stake() function
     function stake(uint256 amount) public override {
-        require(amount > 0, "Cannot stake 0");
+        require(amount != 0, "Cannot stake 0");
         require(address(uniToken) != address(0), "Liquidity Pool Token has not been set yet");
 
         _updatePeriodFinish();
@@ -177,7 +177,7 @@ contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
     }
 
     function withdraw(uint256 amount) public override {
-        require(amount > 0, "Cannot withdraw 0");
+        require(amount != 0, "Cannot withdraw 0");
         require(address(uniToken) != address(0), "Liquidity Pool Token has not been set yet");
 
         _updateAccountReward(msg.sender);
@@ -201,7 +201,7 @@ contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
 
         uint256 reward = earned(msg.sender);
 
-        require(reward > 0, "Nothing to claim");
+        require(reward != 0, "Nothing to claim");
 
         rewards[msg.sender] = 0;
         yetiToken.transfer(msg.sender, reward);
@@ -210,9 +210,9 @@ contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
 
     // Used only on initialization, sets the reward rate and the end time for the program
     function _notifyRewardAmount(uint256 _reward, uint256 _duration) internal {
-        assert(_reward > 0);
-        assert(_reward == yetiToken.balanceOf(address(this)));
-        assert(periodFinish == 0);
+        require(_reward != 0, "_notifyRewardAmount: reward is 0");
+        require(_reward == yetiToken.balanceOf(address(this)), "_notifyRewardAmount: reward not equal to balance");
+        require(periodFinish == 0, "_notifyRewardAmount: periodFinish != 0");
 
         _updateReward();
 
@@ -226,7 +226,7 @@ contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
     // Adjusts end time for the program after periods of zero total supply
     function _updatePeriodFinish() internal {
         if (totalSupply() == 0) {
-            assert(periodFinish > 0);
+            require(periodFinish != 0, "_updatePeriodFinish: periodFinish <= 0");
             /*
              * If the finish period has been reached (but there are remaining rewards due to zero stake),
              * to get the new finish date we must add to the current timestamp the difference between
@@ -253,7 +253,7 @@ contract Pool2Unipool is LPTokenWrapper, Ownable, CheckContract, IUnipool {
     function _updateAccountReward(address account) internal {
         _updateReward();
 
-        assert(account != address(0));
+        require(account != address(0), "_updateAccountReward: account is address(0)");
 
         rewards[account] = earned(account);
         userRewardPerTokenPaid[account] = rewardPerTokenStored;
