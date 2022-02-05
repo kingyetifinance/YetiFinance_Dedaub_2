@@ -13,13 +13,17 @@ contract YUSDTokenTester is YUSDToken {
         address _troveManagerLiquidatorAddress,
         address _troveManagerRedemptionsAddress,
         address _stabilityPoolAddress,
-        address _borrowerOperationsAddress
+        address _borrowerOperationsAddress,
+        address _timelockAddress
     ) public YUSDToken(_troveManagerAddress,
                        _troveManagerLiquidatorAddress,
                        _troveManagerRedemptionsAddress,
                       _stabilityPoolAddress,
-                      _borrowerOperationsAddress) {}
-    
+                      _borrowerOperationsAddress,
+                        _timelockAddress) {}
+
+
+
     function unprotectedMint(address _account, uint256 _amount) external {
         // No check on caller here
 

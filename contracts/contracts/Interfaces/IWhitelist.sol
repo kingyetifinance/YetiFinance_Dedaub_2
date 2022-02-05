@@ -14,9 +14,9 @@ interface IWhitelist {
         address _borrowerOperationsAddress
     ) external;
 
-    function isValidRouter(address _router) external view returns (bool);
     function getOracle(address _collateral) view external returns (address);
-    function getRatio(address _collateral) view external returns (uint256);
+    function getSafetyRatio(address _collateral) view external returns (uint256);
+    function getRecoveryRatio(address _collateral) view external returns (uint256);
     function getIsActive(address _collateral) view external returns (bool);
     function getPriceCurve(address _collateral) external view returns (address);
     function getDecimals(address _collateral) external view returns (uint256);
@@ -26,7 +26,16 @@ interface IWhitelist {
     function isWrapped(address _collateral) external view returns (bool);
     function setDefaultRouter(address _collateral, address _router) external;
 
+    function getValuesVC(address[] memory _collaterals, uint[] memory _amounts) view external returns (uint);
+    function getValuesRVC(address[] memory _collaterals, uint[] memory _amounts) view external returns (uint);
+    function getValuesVCforTCR(address[] memory _collaterals, uint[] memory _amounts) view external returns (uint VC, uint256 VCforTCR);
+    function getValuesUSD(address[] memory _collaterals, uint[] memory _amounts) view external returns (uint256);
     function getValueVC(address _collateral, uint _amount) view external returns (uint);
+    function getValueRVC(address _collateral, uint _amount) view external returns (uint);
+    function getValueVCforTCR(address _collateral, uint _amount) view external returns (uint VC, uint256 VCforTCR);
     function getValueUSD(address _collateral, uint _amount) view external returns (uint256);
     function getDefaultRouterAddress(address _collateral) external view returns (address);
+
+    function getValidCaller(address _contract) external view returns (address);
+    function isValidCaller(address _caller) external view returns (bool);
 }

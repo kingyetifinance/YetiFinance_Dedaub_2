@@ -7,6 +7,8 @@ interface IPriceCurve {
 
     function setDecayTime(uint _decayTime) external;
 
+    function setDollarCap(uint _dollarCap) external;
+
     /** 
      * Returns fee based on inputted collateral VC balance and total VC balance of system. 
      * fee is in terms of percentage * 1e18. 

@@ -15,10 +15,6 @@ import "./YetiCustomBase.sol";
 */
 contract LiquityBase is ILiquityBase, YetiCustomBase {
 
-    uint constant public _100pct = 1e18; // 1e18 == 100%
-
-    uint constant public _110pct = 11e17; // 1.1e18 == 110%
-
     // Minimum collateral ratio for individual troves
     uint constant public MCR = 11e17; // 110%
 
@@ -31,8 +27,6 @@ contract LiquityBase is ILiquityBase, YetiCustomBase {
     // Minimum amount of net YUSD debt a must have
     uint constant public MIN_NET_DEBT = 1800e18;
     // uint constant public MIN_NET_DEBT = 0; 
-
-    uint constant public PERCENT_DIVISOR = 200; // dividing by 200 yields 0.5%
 
     uint constant public BORROWING_FEE_FLOOR = DECIMAL_PRECISION / 1000 * 5; // 0.5%
     uint constant public REDEMPTION_FEE_FLOOR = DECIMAL_PRECISION / 1000 * 5; // 0.5%
@@ -48,21 +42,16 @@ contract LiquityBase is ILiquityBase, YetiCustomBase {
         return _debt.add(YUSD_GAS_COMPENSATION);
     }
 
-
+    // returns the net debt, which is total debt - gas compensation of a trove
     function _getNetDebt(uint _debt) internal pure returns (uint) {
         return _debt.sub(YUSD_GAS_COMPENSATION);
     }
-
-
 
     // Return the system's Total Virtual Coin Balance
     // Virtual Coins are a way to keep track of the system collateralization given
     // the collateral ratios of each collateral type
     function getEntireSystemColl() public view returns (uint) {
-        uint activeColl = activePool.getVC();
-        uint liquidatedColl = defaultPool.getVC();
-
-        return activeColl.add(liquidatedColl);
+        return activePool.getVCSystem();
     }
 
 
@@ -79,46 +68,55 @@ contract LiquityBase is ILiquityBase, YetiCustomBase {
         ICR = LiquityMath._computeCR(totalVC, _debt);
     }
 
+    function _getRICRColls(newColls memory _colls, uint _debt) internal view returns (uint RICR) {
+        uint totalVC = _getRVCColls(_colls);
+        RICR = LiquityMath._computeCR(totalVC, _debt);
+    }
+
 
     function _getVC(address[] memory _tokens, uint[] memory _amounts) internal view returns (uint totalVC) {
-        uint256 tokensLen = _tokens.length;
-        require(tokensLen == _amounts.length, "Not same length");
-        for (uint256 i; i < tokensLen; ++i) {
-            uint tokenVC = whitelist.getValueVC(_tokens[i], _amounts[i]);
-            totalVC = totalVC.add(tokenVC);
-        }
+        totalVC = whitelist.getValuesVC(_tokens, _amounts);
+    }
+
+    function _getRVC(address[] memory _tokens, uint[] memory _amounts) internal view returns (uint totalRVC) {
+        totalRVC = whitelist.getValuesRVC(_tokens, _amounts);
     }
 
 
-    function _getVCColls(newColls memory _colls) internal view returns (uint VC) {
-        uint256 tokensLen = _colls.tokens.length;
-        for (uint256 i; i < tokensLen; ++i) {
-            uint valueVC = whitelist.getValueVC(_colls.tokens[i], _colls.amounts[i]);
-            VC = VC.add(valueVC);
-        }
+    function _getVCColls(newColls memory _colls) internal view returns (uint totalVC) {
+        totalVC = whitelist.getValuesVC(_colls.tokens, _colls.amounts);
+    }
+
+    function _getRVCColls(newColls memory _colls) internal view returns (uint totalRVC) {
+        totalRVC = whitelist.getValuesRVC(_colls.tokens, _colls.amounts);
     }
 
 
-    function _getUSDColls(newColls memory _colls) internal view returns (uint USDValue) {
-        uint256 tokensLen = _colls.tokens.length;
-        for (uint256 i; i < tokensLen; ++i) {
-            uint valueUSD = whitelist.getValueUSD(_colls.tokens[i], _colls.amounts[i]);
-            USDValue = USDValue.add(valueUSD);
-        }
+    function _getUSDColls(newColls memory _colls) internal view returns (uint totalUSDValue) {
+        totalUSDValue = whitelist.getValuesUSD(_colls.tokens, _colls.amounts);
     }
 
 
     function _getTCR() internal view returns (uint TCR) {
-        uint entireSystemColl = getEntireSystemColl();
-        uint entireSystemDebt = getEntireSystemDebt();
+        (,uint256 entireSystemCollForTCR) = activePool.getVCforTCRSystem();
+        uint256 entireSystemDebt = getEntireSystemDebt();
         
-        TCR = LiquityMath._computeCR(entireSystemColl, entireSystemDebt);
+        TCR = LiquityMath._computeCR(entireSystemCollForTCR, entireSystemDebt);
     }
 
 
+    // Returns recovery mode bool as well as entire system coll 
+    // Do these together to avoid looping.
+    function _checkRecoveryModeAndSystem() internal view returns (bool recMode, uint256 entireSystemColl, uint256 entireSystemDebt) {
+        uint256 entireSystemCollForTCR;
+        (entireSystemColl, entireSystemCollForTCR) = activePool.getVCforTCRSystem();
+        entireSystemDebt = getEntireSystemDebt();
+        // Check TCR < CCR
+        recMode = LiquityMath._computeCR(entireSystemCollForTCR, entireSystemDebt) < CCR;
+    }
+
     function _checkRecoveryMode() internal view returns (bool) {
-        uint TCR = _getTCR();
-        return TCR < CCR;
+        return _getTCR() < CCR;
     }
 
     // fee and amount are denominated in dollar
@@ -128,7 +126,7 @@ contract LiquityBase is ILiquityBase, YetiCustomBase {
     }
 
     // checks coll has a nonzero balance of at least one token in coll.tokens
-    function _CollsIsNonZero(newColls memory _colls) internal pure returns (bool) {
+    function _collsIsNonZero(newColls memory _colls) internal pure returns (bool) {
         uint256 tokensLen = _colls.tokens.length;
         for (uint256 i; i < tokensLen; ++i) {
             if (_colls.amounts[i] != 0) {
@@ -137,20 +135,4 @@ contract LiquityBase is ILiquityBase, YetiCustomBase {
         }
         return false;
     }
-
-
-    // Check whether or not the system *would be* in Recovery Mode, given the entire system coll and debt.
-    // returns true if the system would be in recovery mode and false if not
-    function _checkPotentialRecoveryMode(uint _entireSystemColl, uint _entireSystemDebt)
-    internal
-    pure
-    returns (bool)
-    {
-        uint TCR = LiquityMath._computeCR(_entireSystemColl, _entireSystemDebt);
-
-        return TCR < CCR;
-    }
-
-
-
 }

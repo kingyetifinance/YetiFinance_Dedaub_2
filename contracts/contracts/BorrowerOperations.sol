@@ -7,17 +7,18 @@ import "./Interfaces/ITroveManager.sol";
 import "./Interfaces/IYUSDToken.sol";
 import "./Interfaces/ICollSurplusPool.sol";
 import "./Interfaces/ISortedTroves.sol";
-import "./Interfaces/ISYETI.sol";
 import "./Interfaces/IWhitelist.sol";
 import "./Interfaces/IYetiRouter.sol";
 import "./Interfaces/IERC20.sol";
+import "./Interfaces/IWAsset.sol";
 import "./Dependencies/LiquityBase.sol";
 import "./Dependencies/Ownable.sol";
 import "./Dependencies/SafeMath.sol";
 import "./Dependencies/ReentrancyGuard.sol";
-import "./Interfaces/IWAsset.sol";
+import "./Dependencies/SafeERC20.sol";
 
-/** 
+
+/**
  * BorrowerOperations is the contract that handles most of external facing trove activities that 
  * a user would make with their own trove, like opening, closing, adjusting, increasing leverage, etc.
  */
@@ -34,6 +35,7 @@ import "./Interfaces/IWAsset.sol";
 
 contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, ReentrancyGuard {
     using SafeMath for uint256;
+    using SafeERC20 for IERC20;
     string public constant NAME = "BorrowerOperations";
 
     // --- Connected contract declarations ---
@@ -46,7 +48,6 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
 
     ICollSurplusPool internal collSurplusPool;
 
-    ISYETI internal sYETI;
     address internal sYETIAddress;
 
     IYUSDToken internal yusdToken;
@@ -54,13 +55,17 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     uint internal constant BOOTSTRAP_PERIOD = 14 days;
     uint deploymentTime;
 
-    // A doubly linked list of Troves, sorted by their collateral ratios
+    // A doubly linked list of Troves, sorted by their recovery collateral ratios
     ISortedTroves internal sortedTroves;
 
-    struct CollateralData {
-        address collateral;
-        uint256 amount;
-    }
+
+    bool leverUpEnabled; // if false, then leverup functions cannot be called.
+
+
+    /* --- Variable container structs  ---
+
+    Used to hold, return and assign variables inside a function, in order to avoid the error:
+    "CompilerError: Stack too deep". */
 
     struct DepositFeeCalc {
         uint256 collateralYUSDFee;
@@ -68,12 +73,9 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         uint256 collateralInputVC;
         uint256 systemTotalVC;
         address token;
+        uint256 activePoolVCPost;
     }
 
-    /* --- Variable container structs  ---
-
-    Used to hold, return and assign variables inside a function, in order to avoid the error:
-    "CompilerError: Stack too deep". */
     struct AdjustTrove_Params {
         address[] _collsIn;
         uint256[] _amountsIn;
@@ -92,6 +94,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     struct LocalVariables_adjustTrove {
         uint256 netDebtChange;
         bool isCollIncrease;
+        bool isRecoveryMode;
         uint256 collChange;
         uint256 currVC;
         uint256 newVC;
@@ -102,6 +105,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         uint256[] newAmounts;
         uint256 oldICR;
         uint256 newICR;
+        uint256 newRICR;
         uint256 newTCR;
         uint256 YUSDFee;
         uint256 variableYUSDFee;
@@ -109,19 +113,29 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         uint256 VCin;
         uint256 VCout;
         uint256 maxFeePercentageFactor;
+        uint256 entireSystemColl;
+        uint256 entireSystemDebt;
+    }
+
+    struct OpenTrove_Params {
+        uint256 _maxFeePercentage;
+        uint256 _YUSDAmount;
+        uint256 _totalYUSDDebtFromLever;
+        address _upperHint;
+        address _lowerHint;
     }
 
     struct LocalVariables_openTrove {
-        address[] collaterals;
-        uint256[] prices;
         uint256 YUSDFee;
         uint256 netDebt;
         uint256 compositeDebt;
+        uint256 RICR;
         uint256 ICR;
         uint256 arrayIndex;
-        address collAddress;
         uint256 VC;
         uint256 newTCR;
+        uint256 entireSystemColl;
+        uint256 entireSystemDebt;
         bool isRecoveryMode;
     }
 
@@ -136,6 +150,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         ITroveManager troveManager;
         IActivePool activePool;
         IYUSDToken yusdToken;
+        IWhitelist whitelist;
     }
 
     enum BorrowerOperation {
@@ -153,6 +168,8 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         BorrowerOperation operation
     );
     event YUSDBorrowingFeePaid(address indexed _borrower, uint256 _YUSDFee);
+
+
 
     // --- Dependency setters ---
 
@@ -197,23 +214,21 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address[] calldata _colls,
         uint256[] calldata _amounts
     ) external override nonReentrant {
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         _requireLengthNonzero(_amounts.length);
-        _requireValidDepositCollateral(_colls, _amounts);
-        _requireNoDuplicateColls(_colls); // Check that there is no overlap in _colls
+        _requireValidDepositCollateral(_colls, _amounts, contractsCache.whitelist);
 
         // transfer collateral into ActivePool
-        _transferCollateralsIntoActivePool(msg.sender, _colls, _amounts);
+        _transferCollateralsIntoActivePool(_colls, _amounts);
 
-        _openTroveInternal(
-            msg.sender,
+        OpenTrove_Params memory params = OpenTrove_Params(
             _maxFeePercentage,
             _YUSDAmount,
             0,
             _upperHint,
-            _lowerHint,
-            _colls,
-            _amounts
+            _lowerHint
         );
+        _openTroveInternal(params, _colls, _amounts, contractsCache);
     }
 
     // Lever up. Takes in a leverage amount (11x) and a token, and calculates the amount
@@ -234,47 +249,45 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         uint256[] memory _amounts, 
         uint256[] memory _leverages,
         uint256[] calldata _maxSlippages
-    ) external override nonReentrant{
+    ) external override nonReentrant {
+        _requireLeverUpEnabled();
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         uint256 collsLen = _colls.length;
         _requireLengthNonzero(collsLen);
-        _requireValidDepositCollateral(_colls, _amounts);
+        _requireValidDepositCollateral(_colls, _amounts, contractsCache.whitelist);
         // Must check additional passed in arrays
         _requireLengthsEqual(collsLen, _leverages.length);
         _requireLengthsEqual(collsLen, _maxSlippages.length);
-        _requireNoDuplicateColls(_colls);
-        uint additionalTokenAmount;
-        uint additionalYUSDDebt;
         uint totalYUSDDebtFromLever;
         for (uint256 i; i < collsLen; ++i) {
             if (_leverages[i] != 0) {
-                (additionalTokenAmount, additionalYUSDDebt) = _singleLeverUp(
+                (uint additionalTokenAmount, uint additionalYUSDDebt) = _singleLeverUp(
                     _colls[i],
                     _amounts[i],
                     _leverages[i],
-                    _maxSlippages[i]
+                    _maxSlippages[i],
+                    contractsCache
                 );
                 // Transfer into active pool, non levered amount. 
-                _singleTransferCollateralIntoActivePool(msg.sender, _colls[i], _amounts[i]);
+                _singleTransferCollateralIntoActivePool(_colls[i], _amounts[i]);
                 // additional token amount was set to the original amount * leverage. 
                 _amounts[i] = additionalTokenAmount.add(_amounts[i]);
                 totalYUSDDebtFromLever = totalYUSDDebtFromLever.add(additionalYUSDDebt);
             } else {
                 // Otherwise skip and do normal transfer that amount into active pool. 
-                _singleTransferCollateralIntoActivePool(msg.sender, _colls[i], _amounts[i]);
+                _singleTransferCollateralIntoActivePool(_colls[i], _amounts[i]);
             }
         }
         _YUSDAmount = _YUSDAmount.add(totalYUSDDebtFromLever);
         
-        _openTroveInternal(
-            msg.sender,
+        OpenTrove_Params memory params = OpenTrove_Params(
             _maxFeePercentage,
             _YUSDAmount,
             totalYUSDDebtFromLever,
             _upperHint,
-            _lowerHint,
-            _colls,
-            _amounts
+            _lowerHint
         );
+        _openTroveInternal(params, _colls, _amounts, contractsCache);
     }
 
     // internal function for minting yusd at certain leverage and max slippage, and then performing 
@@ -282,15 +295,16 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     function _singleLeverUp(address _token, 
         uint256 _amount, 
         uint256 _leverage, 
-        uint256 _maxSlippage) 
+        uint256 _maxSlippage,
+        ContractsCache memory contractsCache)
         internal
         returns (uint256 _finalTokenAmount, uint256 _additionalYUSDDebt) {
         require(_leverage > 1e18, "WrongLeverage");
         require(_maxSlippage <= 1e18, "WrongSlippage");
-        IYetiRouter router = IYetiRouter(whitelist.getDefaultRouterAddress(_token));
+        IYetiRouter router = IYetiRouter(contractsCache.whitelist.getDefaultRouterAddress(_token));
         // leverage is 5e18 for 5x leverage. Minus 1 for what the user already has in collateral value.
         uint _additionalTokenAmount = _amount.mul(_leverage.sub(1e18)).div(1e18); 
-        _additionalYUSDDebt = whitelist.getValueUSD(_token, _additionalTokenAmount);
+        _additionalYUSDDebt = contractsCache.whitelist.getValueUSD(_token, _additionalTokenAmount);
 
         // 1/(1-1/ICR) = leverage. (1 - 1/ICR) = 1/leverage
         // 1 - 1/leverage = 1/ICR. ICR = 1/(1 - 1/leverage) = (1/((leverage-1)/leverage)) = leverage / (leverage - 1)
@@ -302,14 +316,14 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
 
         uint256 slippageAdjustedValue = _additionalTokenAmount.mul(DECIMAL_PRECISION.sub(_maxSlippage)).div(1e18);
         
-        yusdToken.mint(address(this), _additionalYUSDDebt);
-        yusdToken.approve(address(router), _additionalYUSDDebt);
+        // Mint to the router. 
+        contractsCache.yusdToken.mint(address(router), _additionalYUSDDebt);
         // route will swap the tokens and transfer it to the active pool automatically. Router will send to active pool and 
         // reward balance will be sent to the user if wrapped asset. 
         IERC20 erc20Token = IERC20(_token);
-        uint256 balanceBefore = erc20Token.balanceOf(address(activePool));
-        _finalTokenAmount = router.route(address(this), address(yusdToken), _token, _additionalYUSDDebt, slippageAdjustedValue);
-        require(erc20Token.balanceOf(address(activePool)) == balanceBefore.add(_finalTokenAmount), "BO:RouteLeverUpNotSent");
+        uint256 balanceBefore = erc20Token.balanceOf(address(contractsCache.activePool));
+        _finalTokenAmount = router.route(address(this), address(contractsCache.yusdToken), _token, _additionalYUSDDebt, slippageAdjustedValue);
+        require(erc20Token.balanceOf(address(contractsCache.activePool)) == balanceBefore.add(_finalTokenAmount), "BO:RouteLeverUpNotSent");
     }
 
 
@@ -318,46 +332,40 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     // Should be called *after* collateral has been already sent to the active pool
     // Should confirm _colls, is valid collateral prior to calling this
     function _openTroveInternal(
-        address _troveOwner,
-        uint256 _maxFeePercentage,
-        uint256 _YUSDAmount,
-        uint256 _totalYUSDDebtFromLever,
-        address _upperHint,
-        address _lowerHint,
+        OpenTrove_Params memory params,
         address[] memory _colls,
-        uint256[] memory _amounts
+        uint256[] memory _amounts,
+        ContractsCache memory contractsCache
     ) internal {
         LocalVariables_openTrove memory vars;
 
-        vars.isRecoveryMode = _checkRecoveryMode();
+        (vars.isRecoveryMode, vars.entireSystemColl, vars.entireSystemDebt) = _checkRecoveryModeAndSystem();
 
-        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken);
+        _requireValidMaxFeePercentage(params._maxFeePercentage, vars.isRecoveryMode);
+        _requireTroveisNotActive(contractsCache.troveManager, msg.sender);
 
-        _requireValidMaxFeePercentage(_maxFeePercentage, vars.isRecoveryMode);
-        _requireTroveisNotActive(contractsCache.troveManager, _troveOwner);
-
-        vars.netDebt = _YUSDAmount;
+        vars.netDebt = params._YUSDAmount;
 
         // For every collateral type in, calculate the VC and get the variable fee
-        vars.VC = _getVC(_colls, _amounts);
+        vars.VC = contractsCache.whitelist.getValuesVC(_colls, _amounts);
 
         if (!vars.isRecoveryMode) {
             // when not in recovery mode, add in the 0.5% fee
             vars.YUSDFee = _triggerBorrowingFee(
                 contractsCache.troveManager,
                 contractsCache.yusdToken,
-                _YUSDAmount,
+                params._YUSDAmount,
                 vars.VC, // here it is just VC in, which is always larger than YUSD amount
-                _maxFeePercentage
+                params._maxFeePercentage
             );
-            _maxFeePercentage = _maxFeePercentage.sub(vars.YUSDFee.mul(DECIMAL_PRECISION).div(vars.VC));
+            params._maxFeePercentage = params._maxFeePercentage.sub(vars.YUSDFee.mul(DECIMAL_PRECISION).div(vars.VC));
         }
 
         // Add in variable fee. Always present, even in recovery mode.
         vars.YUSDFee = vars.YUSDFee.add(
-            _getTotalVariableDepositFee(_colls, _amounts, vars.VC, 0, vars.VC, _maxFeePercentage, contractsCache)
+            _getTotalVariableDepositFee(_colls, _amounts, vars.entireSystemColl, vars.VC, 0, vars.VC, params._maxFeePercentage, contractsCache)
         );
-
+        
         // Adds total fees to netDebt
         vars.netDebt = vars.netDebt.add(vars.YUSDFee); // The raw debt change includes the fee
 
@@ -371,31 +379,33 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             _requireICRisAboveCCR(vars.ICR);
         } else {
             _requireICRisAboveMCR(vars.ICR);
-            vars.newTCR = _getNewTCRFromTroveChange(vars.VC, true, vars.compositeDebt, true); // bools: coll increase, debt increase
+            vars.newTCR = _getNewTCRFromTroveChange(vars.entireSystemColl, vars.entireSystemDebt, vars.VC, true, vars.compositeDebt, true); // bools: coll increase, debt increase
             _requireNewTCRisAboveCCR(vars.newTCR);
         }
 
         // Set the trove struct's properties
-        contractsCache.troveManager.setTroveStatus(_troveOwner, 1);
+        contractsCache.troveManager.setTroveStatus(msg.sender, 1);
 
-        contractsCache.troveManager.updateTroveColl(_troveOwner, _colls, _amounts);
-        contractsCache.troveManager.increaseTroveDebt(_troveOwner, vars.compositeDebt);
+        contractsCache.troveManager.updateTroveColl(msg.sender, _colls, _amounts);
+        contractsCache.troveManager.increaseTroveDebt(msg.sender, vars.compositeDebt);
 
-        contractsCache.troveManager.updateTroveRewardSnapshots(_troveOwner);
+        contractsCache.troveManager.updateTroveRewardSnapshots(msg.sender);
 
-        contractsCache.troveManager.updateStakeAndTotalStakes(_troveOwner);
+        contractsCache.troveManager.updateStakeAndTotalStakes(msg.sender);
 
-        sortedTroves.insert(_troveOwner, vars.ICR, _upperHint, _lowerHint);
-        vars.arrayIndex = contractsCache.troveManager.addTroveOwnerToArray(_troveOwner);
-        emit TroveCreated(_troveOwner, vars.arrayIndex);
+        vars.RICR = LiquityMath._computeCR(_getRVC(_colls, _amounts), vars.compositeDebt);
+
+        sortedTroves.insert(msg.sender, vars.RICR, params._upperHint, params._lowerHint);
+        vars.arrayIndex = contractsCache.troveManager.addTroveOwnerToArray(msg.sender);
+        emit TroveCreated(msg.sender, vars.arrayIndex);
 
         contractsCache.activePool.receiveCollateral(_colls, _amounts);
 
         _withdrawYUSD(
             contractsCache.activePool,
             contractsCache.yusdToken,
-            _troveOwner,
-            _YUSDAmount.sub(_totalYUSDDebtFromLever),
+            msg.sender,
+            params._YUSDAmount.sub(params._totalYUSDDebtFromLever),
             vars.netDebt
         );
 
@@ -409,13 +419,13 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         );
 
         emit TroveUpdated(
-            _troveOwner,
+            msg.sender,
             vars.compositeDebt,
             _colls,
             _amounts,
             BorrowerOperation.openTrove
         );
-        emit YUSDBorrowingFeePaid(_troveOwner, vars.YUSDFee);
+        emit YUSDBorrowingFeePaid(msg.sender, vars.YUSDFee);
     }
 
 
@@ -427,6 +437,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address _lowerHint, 
         uint256 _maxFeePercentage
     ) external override nonReentrant {
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         AdjustTrove_Params memory params;
         params._collsIn = _collsIn;
         params._amountsIn = _amountsIn;
@@ -435,12 +446,11 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         params._maxFeePercentage = _maxFeePercentage;
 
         // check that all _collsIn collateral types are in the whitelist
-        _requireValidDepositCollateral(_collsIn, params._amountsIn);
-        _requireNoDuplicateColls(_collsIn); // Check that there is no overlap with in or out in itself
+        _requireValidDepositCollateral(_collsIn, _amountsIn, contractsCache.whitelist);
 
         // pull in deposit collateral
-        _transferCollateralsIntoActivePool(msg.sender, params._collsIn, params._amountsIn);
-        _adjustTrove(params);
+        _transferCollateralsIntoActivePool(_collsIn, _amountsIn);
+        _adjustTrove(params, contractsCache);
     }
 
 
@@ -455,6 +465,8 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address _lowerHint, 
         uint256 _maxFeePercentage
     ) external override nonReentrant {
+        _requireLeverUpEnabled();
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         AdjustTrove_Params memory params;
         params._upperHint = _upperHint;
         params._lowerHint = _lowerHint;
@@ -462,31 +474,29 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         uint256 collsLen = _collsIn.length;
 
         // check that all _collsIn collateral types are in the whitelist
-        _requireValidDepositCollateral(_collsIn, _amountsIn);
+        _requireValidDepositCollateral(_collsIn, _amountsIn, contractsCache.whitelist);
         // Must check that other passed in arrays are correct length
         _requireLengthsEqual(collsLen, _leverages.length);
         _requireLengthsEqual(collsLen, _maxSlippages.length);
-        _requireNoDuplicateColls(params._collsIn); // Check that there is no overlap with in or out in itself
 
-        uint additionalTokenAmount;
-        uint additionalYUSDDebt;
-        uint totalYUSDDebtFromLever;
+        uint256 totalYUSDDebtFromLever;
         for (uint256 i; i < collsLen; ++i) {
             if (_leverages[i] != 0) {
-                (additionalTokenAmount, additionalYUSDDebt) = _singleLeverUp(
+                (uint256 additionalTokenAmount, uint256 additionalYUSDDebt) = _singleLeverUp(
                     _collsIn[i],
                     _amountsIn[i],
                     _leverages[i],
-                    _maxSlippages[i]
+                    _maxSlippages[i],
+                    contractsCache
                 );
                 // Transfer into active pool, non levered amount. 
-                _singleTransferCollateralIntoActivePool(msg.sender, _collsIn[i], _amountsIn[i]);
+                _singleTransferCollateralIntoActivePool(_collsIn[i], _amountsIn[i]);
                 // additional token amount was set to the original amount * leverage. 
                 _amountsIn[i] = additionalTokenAmount.add(_amountsIn[i]);
                 totalYUSDDebtFromLever = totalYUSDDebtFromLever.add(additionalYUSDDebt);
             } else {
                 // Otherwise skip and do normal transfer that amount into active pool. 
-                _singleTransferCollateralIntoActivePool(msg.sender, _collsIn[i], _amountsIn[i]);
+                _singleTransferCollateralIntoActivePool(_collsIn[i], _amountsIn[i]);
             }
         }
         _YUSDAmount = _YUSDAmount.add(totalYUSDDebtFromLever);
@@ -497,7 +507,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
 
         params._collsIn = _collsIn;
         params._amountsIn = _amountsIn;
-        _adjustTrove(params);
+        _adjustTrove(params, contractsCache);
     }
 
     // Withdraw collateral from a trove. Calls _adjustTrove with correct params. 
@@ -507,6 +517,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address _upperHint,
         address _lowerHint
     ) external override nonReentrant {
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         AdjustTrove_Params memory params;
         params._collsOut = _collsOut;
         params._amountsOut = _amountsOut;
@@ -514,10 +525,9 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         params._lowerHint = _lowerHint;
 
         // check that all _collsOut collateral types are in the whitelist
-        _requireValidDepositCollateral(params._collsOut, params._amountsOut);
-        _requireNoDuplicateColls(params._collsOut); // Check that there is no overlap with in or out in itself
+        _requireValidDepositCollateral(_collsOut, _amountsOut, contractsCache.whitelist);
 
-        _adjustTrove(params);
+        _adjustTrove(params, contractsCache);
     }
 
     // Withdraw YUSD tokens from a trove: mint new YUSD tokens to the owner, and increase the trove's debt accordingly. 
@@ -528,13 +538,14 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address _upperHint,
         address _lowerHint
     ) external override nonReentrant {
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         AdjustTrove_Params memory params;
         params._YUSDChange = _YUSDAmount;
         params._maxFeePercentage = _maxFeePercentage;
         params._upperHint = _upperHint;
         params._lowerHint = _lowerHint;
         params._isDebtIncrease = true;
-        _adjustTrove(params);
+        _adjustTrove(params, contractsCache);
     }
 
     // Repay YUSD tokens to a Trove: Burn the repaid YUSD tokens, and reduce the trove's debt accordingly. 
@@ -544,12 +555,13 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address _upperHint,
         address _lowerHint
     ) external override nonReentrant {
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         AdjustTrove_Params memory params;
         params._YUSDChange = _YUSDAmount;
         params._upperHint = _upperHint;
         params._lowerHint = _lowerHint;
         params._isDebtIncrease = false;
-        _adjustTrove(params);
+        _adjustTrove(params, contractsCache);
     }
 
     // Adjusts trove with multiple colls in / out. Calls _adjustTrove with correct params.
@@ -564,23 +576,21 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address _lowerHint,
         uint256 _maxFeePercentage
     ) external override nonReentrant {
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
         // check that all _collsIn collateral types are in the whitelist
-        _requireValidDepositCollateral(_collsIn, _amountsIn);
-        _requireValidDepositCollateral(_collsOut, _amountsOut);
+        _requireValidDepositCollateral(_collsIn, _amountsIn, contractsCache.whitelist);
+        _requireValidDepositCollateral(_collsOut, _amountsOut, contractsCache.whitelist);
         _requireNoOverlapColls(_collsIn, _collsOut); // check that there are no overlap between _collsIn and _collsOut
-        _requireNoDuplicateColls(_collsIn);
-        _requireNoDuplicateColls(_collsOut);
 
         // pull in deposit collateral
-        _transferCollateralsIntoActivePool(msg.sender, _collsIn, _amountsIn);
-        uint256[] memory maxSlippages = new uint256[](0);
+        _transferCollateralsIntoActivePool(_collsIn, _amountsIn);
 
         AdjustTrove_Params memory params = AdjustTrove_Params(
             _collsIn,
             _amountsIn,
             _collsOut,
             _amountsOut,
-            maxSlippages,
+            new uint256[](0), // max leverages is a 0 array in this case.
             _YUSDChange,
             0,
             _isDebtIncrease,
@@ -590,7 +600,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             _maxFeePercentage
         );
 
-        _adjustTrove(params);
+        _adjustTrove(params, contractsCache);
     }
 
     /*
@@ -599,14 +609,14 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
      *
      * Should be called after the collsIn has been sent to ActivePool
      */
-    function _adjustTrove(AdjustTrove_Params memory params) internal {
-        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken);
+    function _adjustTrove(AdjustTrove_Params memory params, ContractsCache memory contractsCache) internal {
+
         LocalVariables_adjustTrove memory vars;
 
-        bool isRecoveryMode = _checkRecoveryMode();
+        (vars.isRecoveryMode, vars.entireSystemColl, vars.entireSystemDebt) = _checkRecoveryModeAndSystem();
 
         if (params._isDebtIncrease) {
-            _requireValidMaxFeePercentage(params._maxFeePercentage, isRecoveryMode);
+            _requireValidMaxFeePercentage(params._maxFeePercentage, vars.isRecoveryMode);
             _requireNonZeroDebtChange(params._YUSDChange);
         }
 
@@ -617,8 +627,8 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         contractsCache.troveManager.applyPendingRewards(msg.sender);
         vars.netDebtChange = params._YUSDChange;
 
-        vars.VCin = _getVC(params._collsIn, params._amountsIn);
-        vars.VCout = _getVC(params._collsOut, params._amountsOut);
+        vars.VCin = contractsCache.whitelist.getValuesVC(params._collsIn, params._amountsIn);
+        vars.VCout = contractsCache.whitelist.getValuesVC(params._collsOut, params._amountsOut);
 
         if (params._isDebtIncrease) {
             vars.maxFeePercentageFactor = LiquityMath._max(vars.VCin, params._YUSDChange);
@@ -627,7 +637,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         }
         
         // If the adjustment incorporates a debt increase and system is in Normal Mode, then trigger a borrowing fee
-        if (params._isDebtIncrease && !isRecoveryMode) {
+        if (params._isDebtIncrease && !vars.isRecoveryMode) {
             vars.YUSDFee = _triggerBorrowingFee(
                 contractsCache.troveManager,
                 contractsCache.yusdToken,
@@ -643,7 +653,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         // get current portfolio in trove
         (vars.currAssets, vars.currAmounts) = contractsCache.troveManager.getTroveColls(msg.sender);
         // current VC based on current portfolio and latest prices
-        vars.currVC = _getVC(vars.currAssets, vars.currAmounts);
+        vars.currVC = contractsCache.whitelist.getValuesVC(vars.currAssets, vars.currAmounts);
 
         // get new portfolio in trove after changes. Will error if invalid changes:
         (vars.newAssets, vars.newAmounts) = _getNewPortfolio(
@@ -655,7 +665,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             params._amountsOut
         );
         // new VC based on new portfolio and latest prices
-        vars.newVC = _getVC(vars.newAssets, vars.newAmounts);
+        vars.newVC = vars.currVC.add(vars.VCin).sub(vars.VCout);
 
         vars.isCollIncrease = vars.newVC > vars.currVC;
         vars.collChange = 0;
@@ -671,6 +681,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             vars.variableYUSDFee = _getTotalVariableDepositFee(
                     params._collsIn,
                     params._amountsIn,
+                    vars.entireSystemColl,
                     vars.VCin,
                     vars.VCout,
                     vars.maxFeePercentageFactor,
@@ -692,7 +703,6 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
 
         // Check the adjustment satisfies all conditions for the current system mode
         _requireValidAdjustmentInCurrentMode(
-            isRecoveryMode,
             params._amountsOut,
             params._isDebtIncrease,
             vars
@@ -709,12 +719,11 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             contractsCache.activePool.receiveCollateral(params._collsIn, params._amountsIn);
         }
 
-        (vars.newVC, vars.newDebt) = _updateTroveFromAdjustment(
+        vars.newDebt = _updateTroveFromAdjustment(
             contractsCache.troveManager,
             msg.sender,
             vars.newAssets,
             vars.newAmounts,
-            vars.newVC,
             vars.netDebtChange,
             params._isDebtIncrease, 
             vars.variableYUSDFee
@@ -722,8 +731,9 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
 
         contractsCache.troveManager.updateStakeAndTotalStakes(msg.sender);
 
+        vars.newRICR = LiquityMath._computeCR(_getRVC(vars.newAssets, vars.newAmounts), vars.newDebt);
         // Re-insert trove in to the sorted list
-        sortedTroves.reInsert(msg.sender, vars.newICR, params._upperHint, params._lowerHint);
+        sortedTroves.reInsert(msg.sender, vars.newRICR, params._upperHint, params._lowerHint);
 
         emit TroveUpdated(
             msg.sender,
@@ -737,7 +747,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         // in case of unlever up
         if (params._isUnlever) {
             // 1. Withdraw the collateral from active pool and perform swap using single unlever up and corresponding router. 
-            _unleverColls(contractsCache.activePool, params._collsOut, params._amountsOut, params._maxSlippages);
+            _unleverColls(contractsCache, params._collsOut, params._amountsOut, params._maxSlippages);
 
             // 2. update the trove with the new collateral and debt, repaying the total amount of YUSD specified. 
             // if not enough coll sold for YUSD, must cover from user balance
@@ -770,44 +780,45 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         }
     }
 
-    // internal function for minting yusd at certain leverage and max slippage, and then performing 
-    // swap with whitelist's approved router. 
-    function _singleUnleverUp(address _token, 
+    // internal function for un-levering up. Takes the collateral amount specified passed in, and swaps it using the whitelisted
+    // router back into YUSD, so that the debt can be paid back for a certain amount. 
+    function _singleUnleverUp(
+        ContractsCache memory contractsCache,
+        address _token, 
         uint256 _amount, 
         uint256 _maxSlippage) 
         internal
         returns (uint256 _finalYUSDAmount) {
         require(_maxSlippage <= 1e18, "WrongSlippage");
-        // if wrapped token, then does i t automatically transfer to active pool?
-        // It should actually transfer to the owner, who will have bOps pre approved
-        // cause of original approve
-        IYetiRouter router = IYetiRouter(whitelist.getDefaultRouterAddress(_token));
-        // then calculate value amount of expected YUSD output based on amount of token to sell
+        // Send collaterals to the whitelisted router from the active pool so it can perform the swap
+        address router = contractsCache.whitelist.getDefaultRouterAddress(_token);
+        contractsCache.activePool.sendSingleCollateral(router, _token, _amount);
 
-        uint valueOfCollateral = whitelist.getValueUSD(_token, _amount);
+        // then calculate value amount of expected YUSD output based on amount of token to sell
+        uint valueOfCollateral = contractsCache.whitelist.getValueUSD(_token, _amount);
         uint256 slippageAdjustedValue = valueOfCollateral.mul(DECIMAL_PRECISION.sub(_maxSlippage)).div(1e18);
-        IERC20 yusdTokenCached = yusdToken;
-        require(IERC20(_token).approve(address(router), valueOfCollateral));
-        uint256 balanceBefore = yusdToken.balanceOf(address(this));
-        _finalYUSDAmount = router.unRoute(address(this), _token, address(yusdTokenCached), _amount, slippageAdjustedValue);
-        require(yusdTokenCached.balanceOf(address(this)) == balanceBefore.add(_finalYUSDAmount), "BO:YUSDNotSentUnLever");
+
+        // Perform swap in the router using router.unRoute, which sends the YUSD back to the msg.sender, guaranteeing at least slippageAdjustedValue out. 
+        uint256 balanceBefore = contractsCache.yusdToken.balanceOf(msg.sender);
+        _finalYUSDAmount = IYetiRouter(router).unRoute(msg.sender, _token, address(contractsCache.yusdToken), _amount, slippageAdjustedValue);
+        require(contractsCache.yusdToken.balanceOf(msg.sender) == balanceBefore.add(_finalYUSDAmount), "BO:YUSDNotSentUnLever");
     }
 
     // Takes the colls and amounts, transfer non levered from the active pool to the user, and unlevered to this contract 
     // temporarily. Then takes the unlevered ones and calls relevant router to swap them to the user. 
     function _unleverColls(
-        IActivePool _activePool, 
+        ContractsCache memory contractsCache,
         address[] memory _colls, 
         uint256[] memory _amounts, 
         uint256[] memory _maxSlippages
     ) internal {
         uint256 collsLen = _colls.length;
         for (uint256 i; i < collsLen; ++i) {
+            // If max slippages is 0, then it is a normal withdraw. Otherwise it needs to be unlevered. 
             if (_maxSlippages[i] != 0) {
-                _activePool.sendSingleCollateral(address(this), _colls[i], _amounts[i]);
-                _singleUnleverUp(_colls[i], _amounts[i], _maxSlippages[i]);
+                _singleUnleverUp(contractsCache, _colls[i], _amounts[i], _maxSlippages[i]);
             } else {
-                _activePool.sendSingleCollateralUnwrap(msg.sender, msg.sender, _colls[i], _amounts[i]);
+                contractsCache.activePool.sendSingleCollateralUnwrap(msg.sender, msg.sender, _colls[i], _amounts[i]);
             }
         }
     }
@@ -828,9 +839,9 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address _upperHint,
         address _lowerHint
         ) external override nonReentrant {
-        // check that all _collsOut collateral types are in the whitelist
-        _requireValidDepositCollateral(_collsOut, _amountsOut);
-        _requireNoDuplicateColls(_collsOut); // Check that there is no overlap with out in itself
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
+        // check that all _collsOut collateral types are in the whitelist, as well as that it doesn't overlap with itself.
+        _requireValidDepositCollateral(_collsOut, _amountsOut, contractsCache.whitelist);
         _requireLengthsEqual(_amountsOut.length, _maxSlippages.length);
 
         AdjustTrove_Params memory params; 
@@ -842,7 +853,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         params._lowerHint = _lowerHint;
         params._isUnlever = true;
 
-        _adjustTrove(params);
+        _adjustTrove(params, contractsCache);
     }
 
     function closeTroveUnlever(
@@ -873,10 +884,11 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     function _closeTrove(
         CloseTrove_Params memory params
         ) internal {
-        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken);
+        ContractsCache memory contractsCache = ContractsCache(troveManager, activePool, yusdToken, whitelist);
 
         _requireTroveisActive(contractsCache.troveManager, msg.sender);
-        _requireNotInRecoveryMode();
+        (bool isRecoveryMode, uint256 entireSystemColl, uint256 entireSystemDebt) = _checkRecoveryModeAndSystem();
+        require(!isRecoveryMode, "BO:NoCloseInRecMode");
 
         contractsCache.troveManager.applyPendingRewards(msg.sender);
 
@@ -886,27 +898,34 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         );
         uint256 debt = contractsCache.troveManager.getTroveDebt(msg.sender);
 
+        {
         // if unlever, will do extra.
-        uint finalYUSDAmount;
-        uint YUSDAmount;
         if (params._isUnlever) {
             // Withdraw the collateral from active pool and perform swap using single unlever up and corresponding router. 
-            _unleverColls(contractsCache.activePool, colls, amounts, params._maxSlippages);
             // tracks the amount of YUSD that is received from swaps. Will send the _YUSDAmount back to repay debt while keeping remainder.
+            // Only unlevers amount passed in, and has to transfer the rest normally. The router itself handles unwrapping
+            uint j;
+            for (uint256 i; i < colls.length; ++i) {
+                uint256 thisAmount = amounts[i];
+                if (j < params._collsOut.length && colls[i] == params._collsOut[j]) {
+                    _singleUnleverUp(contractsCache, params._collsOut[j], params._amountsOut[j], params._maxSlippages[j]);
+                    // In the case of unlever, only unlever the amount passed in, and send back the difference
+                    thisAmount = thisAmount.sub(params._amountsOut[j]); 
+                    ++j;
+                } 
+                contractsCache.activePool.sendSingleCollateralUnwrap(msg.sender, msg.sender, colls[i], thisAmount);
+            }
+        }
         }
 
         // do check after unlever (if applies)
         _requireSufficientYUSDBalance(contractsCache.yusdToken, msg.sender, debt.sub(YUSD_GAS_COMPENSATION));
-        uint256 newTCR = _getNewTCRFromTroveChange(troveVC, false, debt, false);
+        uint256 newTCR = _getNewTCRFromTroveChange(entireSystemColl, entireSystemDebt, troveVC, false, debt, false);
         _requireNewTCRisAboveCCR(newTCR);
 
         contractsCache.troveManager.removeStake(msg.sender);
         contractsCache.troveManager.closeTrove(msg.sender);
 
-        address[] memory finalColls;
-        uint256[] memory finalAmounts;
-
-        emit TroveUpdated(msg.sender, 0, finalColls, finalAmounts, BorrowerOperation.closeTrove);
 
         // Burn the repaid YUSD from the user's balance and the gas compensation from the Gas Pool
         _repayYUSD(contractsCache.activePool, contractsCache.yusdToken, msg.sender, debt.sub(YUSD_GAS_COMPENSATION));
@@ -917,11 +936,13 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         if (!params._isUnlever) {
             contractsCache.activePool.sendCollateralsUnwrap(msg.sender, msg.sender, colls, amounts);
         }
+
+        emit TroveUpdated(msg.sender, 0, new address[](0), new uint256[](0), BorrowerOperation.closeTrove);
     }
 
     /**
      * Claim remaining collateral from a redemption or from a liquidation with ICR > MCR in Recovery Mode
-     * to do all necessary interactions. Can delete if this is the only way to reduce size.
+     * to do all necessary interactions. TODO: Can delete if this is the only way to reduce size.
      */
     function claimCollateral() external override {
         // send collateral from CollSurplus Pool to owner
@@ -937,6 +958,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     function _getTotalVariableDepositFee(
         address[] memory _tokensIn,
         uint256[] memory _amountsIn,
+        uint256 _entireSystemColl,
         uint256 _VCin,
         uint256 _VCout,
         uint256 _maxFeePercentageFactor, 
@@ -947,32 +969,28 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             return 0;
         }
         DepositFeeCalc memory vars;
-        // active pool total VC at current state.
-        vars.systemTotalVC = _contractsCache.activePool.getVC().add(
-            defaultPool.getVC()
-        );
+        // active pool total VC at current state is passed in as _entireSystemColl
         // active pool total VC post adding and removing all collaterals
-        uint256 activePoolVCPost = vars.systemTotalVC.add(_VCin).sub(_VCout);
-        uint256 whitelistFee;
+        vars.activePoolVCPost = _entireSystemColl.add(_VCin).sub(_VCout);
         uint256 tokensLen = _tokensIn.length;
         for (uint256 i; i < tokensLen; ++i) {
             vars.token = _tokensIn[i];
             // VC value of collateral of this type inputted
-            vars.collateralInputVC = whitelist.getValueVC(vars.token, _amountsIn[i]);
+            vars.collateralInputVC = _contractsCache.whitelist.getValueVC(vars.token, _amountsIn[i]);
 
-            // total value in VC of this collateral in active pool (post adding input)
+            // total value in VC of this collateral in active pool (before adding input)
             vars.systemCollateralVC = _contractsCache.activePool.getCollateralVC(vars.token).add(
                 defaultPool.getCollateralVC(vars.token)
             );
 
             // (collateral VC In) * (Collateral's Fee Given Yeti Protocol Backed by Given Collateral)
-            whitelistFee = 
-                    whitelist.getFeeAndUpdate(
+            uint256 whitelistFee = 
+                    _contractsCache.whitelist.getFeeAndUpdate(
                         vars.token,
                         vars.collateralInputVC,
                         vars.systemCollateralVC,
-                        vars.systemTotalVC,
-                        activePoolVCPost
+                        _entireSystemColl,
+                        vars.activePoolVCPost
                     );
             if (_isBeforeFeeBootstrapPeriod()) {
                 whitelistFee = LiquityMath._min(whitelistFee, 1e16); // cap at 1%
@@ -989,7 +1007,6 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     // Transfer in collateral and send to ActivePool
     // (where collateral is held)
     function _transferCollateralsIntoActivePool(
-        address _from,
         address[] memory _colls,
         uint256[] memory _amounts
     ) internal {
@@ -998,7 +1015,6 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             address collAddress = _colls[i];
             uint256 amount = _amounts[i];
             _singleTransferCollateralIntoActivePool(
-                _from,
                 collAddress,
                 amount
             );
@@ -1007,16 +1023,15 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
 
     // does one transfer of collateral into active pool. Checks that it transferred to the active pool correctly.
     function _singleTransferCollateralIntoActivePool(
-        address _from,
         address _coll,
         uint256 _amount
     ) internal {
         if (whitelist.isWrapped(_coll)) {
             // If wrapped asset then it wraps it and sends the wrapped version to the active pool, 
             // and updates reward balance to the new owner. 
-            IWAsset(_coll).wrap(_amount, _from, address(activePool), _from); 
+            IWAsset(_coll).wrap(_amount, msg.sender, address(activePool), msg.sender);
         } else {
-            require(IERC20(_coll).transferFrom(_from, address(activePool), _amount), "BO:TransferCollsFailed");
+            IERC20(_coll).safeTransferFrom(msg.sender, address(activePool), _amount);
         }
     }
 
@@ -1036,26 +1051,25 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         _requireUserAcceptsFee(YUSDFee, _maxFeePercentageFactor, _maxFeePercentage);
 
         // Send fee to sYETI contract
-        _yusdToken.mint(sYETIAddress, YUSDFee);
+        _yusdToken.mint(sYETIAddress, YUSDFee); // todo 
         return YUSDFee;
     }
 
     function _triggerDepositFee(IYUSDToken _yusdToken, uint256 _YUSDFee) internal {
         // Send fee to sYETI contract
-        _yusdToken.mint(sYETIAddress, _YUSDFee);
+        _yusdToken.mint(sYETIAddress, _YUSDFee); // todo 
     }
 
     // Update trove's coll and debt based on whether they increase or decrease
-    function _updateTroveFromAdjustment(
+    function _updateTroveFromAdjustment( 
         ITroveManager _troveManager,
         address _borrower,
         address[] memory _finalColls,
         uint256[] memory _finalAmounts,
-        uint256 _newVC,
         uint256 _debtChange,
         bool _isDebtIncrease, 
         uint256 _variableYUSDFee
-    ) internal returns (uint256, uint256) {
+    ) internal returns (uint256) {
         uint256 newDebt;
         _troveManager.updateTroveColl(_borrower, _finalColls, _finalAmounts);
         if (_isDebtIncrease) { // if debt increase, increase by both amounts
@@ -1068,7 +1082,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             }
         }
 
-        return (_newVC, newDebt);
+        return newDebt;
     }
 
     // gets the finalColls and finalAmounts after all deposits and withdrawals have been made
@@ -1082,15 +1096,11 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         address[] memory _tokensOut,
         uint256[] memory _amountsOut
     ) internal view returns (address[] memory, uint256[] memory) {
-        _requireValidDepositCollateral(_tokensIn, _amountsIn);
-        _requireValidDepositCollateral(_tokensOut, _amountsOut);
 
         // Initial Colls + Input Colls
         newColls memory cumulativeIn = _sumColls(
-            _initialTokens,
-            _initialAmounts,
-            _tokensIn,
-            _amountsIn
+            newColls(_initialTokens, _initialAmounts),
+            newColls(_tokensIn,_amountsIn)
         );
 
         newColls memory newPortfolio = _subColls(cumulativeIn, _tokensOut, _amountsOut);
@@ -1136,52 +1146,70 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         _yusdToken.burn(_account, _YUSD);
     }
 
+    // Returns _coll1 minus _tokens and _amounts
+    // will error if _tokens include a token not in _coll1.tokens
+    function _subColls(newColls memory _coll1, address[] memory _tokens, uint[] memory _amounts)
+    internal
+    view
+    returns (newColls memory finalColls)
+    {
+        uint256 tokensLen = _tokens.length;
+        if (tokensLen == 0) {
+            return _coll1;
+        }
+        uint256 coll1Len = _coll1.tokens.length;
+
+        newColls memory coll3;
+        coll3.tokens = whitelist.getValidCollateral();
+        uint256 coll3Len = coll3.tokens.length;
+        coll3.amounts = new uint256[](coll3Len);
+        uint256 n = 0;
+        for (uint256 i; i < coll1Len; ++i) {
+            if (_coll1.amounts[i] != 0) {
+                uint256 tokenIndex = whitelist.getIndex(_coll1.tokens[i]);
+                coll3.amounts[tokenIndex] = _coll1.amounts[i];
+                n++;
+            }
+        }
+        for (uint256 i; i < tokensLen; ++i) {
+            uint256 tokenIndex = whitelist.getIndex(_tokens[i]);
+            coll3.amounts[tokenIndex] = coll3.amounts[tokenIndex].sub(_amounts[i]);
+            if (coll3.amounts[tokenIndex] == 0) {
+                n--;
+            }
+        }
+
+        address[] memory diffTokens = new address[](n);
+        uint256[] memory diffAmounts = new uint256[](n);
+
+        if (n != 0) {
+            uint j;
+            for (uint i; i < coll3Len; ++i) {
+                if (coll3.amounts[i] != 0) {
+                    diffTokens[j] = coll3.tokens[i];
+                    diffAmounts[j] = coll3.amounts[i];
+                    ++j;
+                }
+            }
+        }
+        finalColls.tokens = diffTokens;
+        finalColls.amounts = diffAmounts;
+    }
+
     // --- 'Require' wrapper functions ---
 
-    function _requireValidDepositCollateral(address[] memory _colls, uint256[] memory _amounts) internal view {
+    // Checks that amounts are nonzero, that the the length of colls and amounts are the same, that the coll is active,
+    // and that there is no overlab collateral in the list.
+    function _requireValidDepositCollateral(address[] memory _colls, uint256[] memory _amounts, IWhitelist whitelist) internal view {
         uint256 collsLen = _colls.length;
         _requireLengthsEqual(collsLen, _amounts.length);
         for (uint256 i; i < collsLen; ++i) {
             require(whitelist.getIsActive(_colls[i]), "BO:BadColl");
             require(_amounts[i] != 0, "BO:NoAmounts");
-        }
-    }
-
-    function _requireNonZeroAdjustment(
-        uint256[] memory _amountsIn,
-        uint256[] memory _amountsOut,
-        uint256 _YUSDChange
-    ) internal pure {
-        require(
-            _arrayIsNonzero(_amountsIn) || _arrayIsNonzero(_amountsOut) || _YUSDChange != 0,
-            "BO:0Adjust"
-        );
-    }
-
-    function _arrayIsNonzero(uint256[] memory arr) internal pure returns (bool) {
-        uint256 arrLen = arr.length;
-        for (uint256 i; i < arrLen; ++i) {
-            if (arr[i] != 0) {
-                return true;
+            for (uint256 j = i.add(1); j < collsLen; j++) {
+                require(_colls[i] != _colls[j], "BO:OverlapColls");
             }
         }
-        return false;
-    }
-
-    function _isBeforeFeeBootstrapPeriod() internal view returns (bool) {
-        return block.timestamp < deploymentTime + BOOTSTRAP_PERIOD; // won't overflow
-    }
-
-    function _requireTroveisActive(ITroveManager _troveManager, address _borrower) internal view {
-        require(_troveManager.isTroveActive(_borrower), "BO:TroveInactive");
-    }
-
-    function _requireTroveisNotActive(ITroveManager _troveManager, address _borrower) internal view {
-        require(!_troveManager.isTroveActive(_borrower), "BO:TroveActive");
-    }
-
-    function _requireNonZeroDebtChange(uint256 _YUSDChange) internal pure {
-        require(_YUSDChange != 0, "BO:NoDebtChange");
     }
 
     function _requireNoOverlapColls(address[] calldata _colls1, address[] calldata _colls2)
@@ -1197,24 +1225,45 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         }
     }
 
-    function _requireNoDuplicateColls(address[] memory _colls) internal pure {
-        uint256 collsLen = _colls.length;
-        for (uint256 i; i < collsLen; ++i) {
-            for (uint256 j = i.add(1); j < collsLen; j++) {
-                require(_colls[i] != _colls[j], "BO:OverlapColls");
-            }
+    // Condition of whether amountsIn is 0 amounts, or amountsOut is 0 amounts, is checked in previous call
+    // to _requireValidDepositCollateral.
+    function _requireNonZeroAdjustment(
+        uint256[] memory _amountsIn,
+        uint256[] memory _amountsOut,
+        uint256 _YUSDChange
+    ) internal pure {
+        if (_YUSDChange == 0) {
+            require(_amountsIn.length != 0 || _amountsOut.length != 0, "BO:0Adjust");
         }
     }
 
-    function _requireNotInRecoveryMode() internal view {
-        require(!_checkRecoveryMode(), "BO:InRecMode");
+    function _isBeforeFeeBootstrapPeriod() internal view returns (bool) {
+        return block.timestamp < deploymentTime + BOOTSTRAP_PERIOD; // won't overflow
+    }
+
+    function _requireLeverUpEnabled() internal view {
+        require(leverUpEnabled, "BO:LeverDisabled");
+    }
+
+    function _requireTroveisActive(ITroveManager _troveManager, address _borrower) internal view {
+        require(_troveManager.isTroveActive(_borrower), "BO:TroveInactive");
+    }
+
+    function _requireTroveisNotActive(ITroveManager _troveManager, address _borrower) internal view {
+        require(!_troveManager.isTroveActive(_borrower), "BO:TroveActive");
+    }
+
+    function _requireNonZeroDebtChange(uint256 _YUSDChange) internal pure {
+        require(_YUSDChange != 0, "BO:NoDebtChange");
     }
 
     function _requireNoCollWithdrawal(uint256[] memory _amountOut) internal pure {
-        require(
-            !_arrayIsNonzero(_amountOut),
-            "BO:InRecMode"
-        );
+        uint256 arrLen = _amountOut.length;
+        for (uint256 i; i < arrLen; ++i) {
+            if (_amountOut[i] != 0) {
+                revert("BO:NoCollWithdrawRecMode");
+            }
+        }
     }
 
     // Function require length nonzero, used to save contract size on revert strings. 
@@ -1228,11 +1277,10 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     }
 
     function _requireValidAdjustmentInCurrentMode(
-        bool _isRecoveryMode,
         uint256[] memory _collWithdrawal,
         bool _isDebtIncrease,
         LocalVariables_adjustTrove memory _vars
-    ) internal view {
+    ) internal pure {
         /*
          *In Recovery Mode, only allow:
          *
@@ -1246,7 +1294,7 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
          * - The new ICR is above MCR
          * - The adjustment won't pull the TCR below CCR
          */
-        if (_isRecoveryMode) {
+        if (_vars.isRecoveryMode) {
             _requireNoCollWithdrawal(_collWithdrawal);
             if (_isDebtIncrease) {
                 _requireICRisAboveCCR(_vars.newICR);
@@ -1256,6 +1304,8 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
             // if Normal Mode
             _requireICRisAboveMCR(_vars.newICR);
             _vars.newTCR = _getNewTCRFromTroveChange(
+                _vars.entireSystemColl,
+                _vars.entireSystemDebt,
                 _vars.collChange,
                 _vars.isCollIncrease,
                 _vars.netDebtChange,
@@ -1325,26 +1375,16 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
         }
     }
 
-    // checks lengths are all good and that all passed in routers are valid routers
-    // function _requireValidRouterParams(
-    //     address[] memory _finalRoutedColls,
-    //     uint[] memory _amounts,
-    //     uint[] memory _minSwapAmounts,
-    //     IYetiRouter[] memory _routers) internal view {
-    //     require(_finalRoutedColls.length == _amounts.length,  "_requireValidRouterParams: _finalRoutedColls length mismatch");
-    //     require(_amounts.length == _routers.length, "_requireValidRouterParams: _routers length mismatch");
-    //     require(_amounts.length == _minSwapAmounts.length, "_minSwapAmounts: finalRoutedColls length mismatch");
-    //     for (uint256 i; i < _routers.length; ++i) {
-    //         require(whitelist.isValidRouter(address(_routers[i])), "_requireValidRouterParams: not a valid router");
-    //     }
-    // }
-
-    // // requires that avax indices are in order
-    // function _requireRouterAVAXIndicesInOrder(uint[] memory _indices) internal pure {
-    //     for (uint256 i; i < _indices.length - 1; ++i) {
-    //         require(_indices[i] < _indices[i.add(1)], "_requireRouterAVAXIndicesInOrder: indices out of order");
-    //     }
-    // }
+    /* team can turn lever up functionality off and on.
+     * leverUpEnabled will initially be false.
+     * Plan is to turn on functionality once YUSD has sufficient liquidity
+     * The only reason it would be turned off is under
+     * unforeseen extreme circumstances
+    */
+    function setLeverUp(bool _enabled) external override {
+        require(whitelist.isValidCaller(msg.sender), "BO: UnapprovedCaller");
+        leverUpEnabled = _enabled;
+    }
 
 
     // --- ICR and TCR getters ---
@@ -1363,18 +1403,18 @@ contract BorrowerOperations is LiquityBase, Ownable, IBorrowerOperations, Reentr
     }
 
     function _getNewTCRFromTroveChange(
+        uint256 _entireSystemColl,
+        uint256 _entireSystemDebt,
         uint256 _collChange,
         bool _isCollIncrease,
         uint256 _debtChange,
         bool _isDebtIncrease
-    ) internal view returns (uint256) {
-        uint256 totalColl = getEntireSystemColl();
-        uint256 totalDebt = getEntireSystemDebt();
+    ) internal pure returns (uint256) {
 
-        totalColl = _isCollIncrease ? totalColl.add(_collChange) : totalColl.sub(_collChange);
-        totalDebt = _isDebtIncrease ? totalDebt.add(_debtChange) : totalDebt.sub(_debtChange);
+        _entireSystemColl = _isCollIncrease ? _entireSystemColl.add(_collChange) : _entireSystemColl.sub(_collChange);
+        _entireSystemDebt = _isDebtIncrease ? _entireSystemDebt.add(_debtChange) : _entireSystemDebt.sub(_debtChange);
 
-        uint256 newTCR = LiquityMath._computeCR(totalColl, totalDebt);
+        uint256 newTCR = LiquityMath._computeCR(_entireSystemColl, _entireSystemDebt);
         return newTCR;
     }
 

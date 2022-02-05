@@ -17,11 +17,11 @@ import "./Dependencies/CheckContract.sol";
 *
 * --- Functionality added specific to the YUSDToken ---
 * 
-* 1) Transfer protection: blacklist of addresses that are invalid recipients (i.e. core Liquity contracts) in external 
-* transfer() and transferFrom() calls. The purpose is to protect users from losing tokens by mistakenly sending YUSD directly to a Liquity 
+* 1) Transfer protection: blacklist of addresses that are invalid recipients (i.e. core Yeti contracts) in external 
+* transfer() and transferFrom() calls. The purpose is to protect users from losing tokens by mistakenly sending YUSD directly to a Yeti 
 * core contract, when they should rather call the right function. 
 *
-* 2) sendToPool() and returnFromPool(): functions callable only Liquity core contracts, which move YUSD tokens between Liquity <-> user.
+* 2) sendToPool() and returnFromPool(): functions callable only Yeti core contracts, which move YUSD tokens between Yeti <-> user.
 */
 
 contract YUSDToken is CheckContract, IYUSDToken {
@@ -60,6 +60,8 @@ contract YUSDToken is CheckContract, IYUSDToken {
     address internal immutable troveManagerRedemptionsAddress;
     address internal immutable stabilityPoolAddress;
     address internal immutable borrowerOperationsAddress;
+    address internal immutable timelockAddress;
+    mapping(address => bool) validMinters;
     
     // --- Events ---
     event TroveManagerAddressChanged(address _troveManagerAddress);
@@ -74,8 +76,9 @@ contract YUSDToken is CheckContract, IYUSDToken {
         address _troveManagerLiquidationsAddress,
         address _troveManagerRedemptionsAddress,
         address _stabilityPoolAddress,
-        address _borrowerOperationsAddress
-    ) 
+        address _borrowerOperationsAddress,
+        address _timelockAddress
+    )
         public 
     {
         checkContract(_troveManagerAddress);
@@ -96,8 +99,11 @@ contract YUSDToken is CheckContract, IYUSDToken {
         stabilityPoolAddress = _stabilityPoolAddress;
         emit StabilityPoolAddressChanged(_stabilityPoolAddress);
 
-        borrowerOperationsAddress = _borrowerOperationsAddress;        
+        borrowerOperationsAddress = _borrowerOperationsAddress;
+        validMinters[_borrowerOperationsAddress] = true;
         emit BorrowerOperationsAddressChanged(_borrowerOperationsAddress);
+
+        timelockAddress = _timelockAddress;
         
         bytes32 hashedName = keccak256(bytes(_NAME));
         bytes32 hashedVersion = keccak256(bytes(_VERSION));
@@ -108,10 +114,10 @@ contract YUSDToken is CheckContract, IYUSDToken {
         _CACHED_DOMAIN_SEPARATOR = _buildDomainSeparator(_TYPE_HASH, hashedName, hashedVersion);
     }
 
-    // --- Functions for intra-Liquity calls ---
+    // --- Functions for intra-Yeti calls ---
 
     function mint(address _account, uint256 _amount) external override {
-        _requireCallerIsBorrowerOperations();
+        _requireValidMinter();
         _mint(_account, _amount);
     }
 
@@ -258,26 +264,33 @@ contract YUSDToken is CheckContract, IYUSDToken {
         emit Approval(owner, spender, amount);
     }
 
+    function addValidMinter(address _newMinter) external {
+        require(msg.sender == timelockAddress, "YUSD: NotTimelock");
+        validMinters[_newMinter] = true;
+    }
+
     // --- 'require' functions ---
 
+    // TODO: update this when we've finalized where YUSD can/can't be sent.
+    // May want to make it possible to send to adddress(0) for burns or something
     function _requireValidRecipient(address _recipient) internal view {
         require(
             _recipient != address(0) && 
             _recipient != address(this),
             "YUSD: Cannot transfer tokens directly to the YUSD token contract or the zero address"
         );
-        require(
-            _recipient != stabilityPoolAddress && 
-            _recipient != troveManagerAddress &&
-            _recipient != troveManagerLiquidationsAddress && 
-            _recipient != troveManagerRedemptionsAddress && 
-            _recipient != borrowerOperationsAddress, 
-            "YUSD: Cannot transfer tokens directly to the StabilityPool, TroveManager or BorrowerOps"
-        );
+        // require(
+        //     _recipient != stabilityPoolAddress && 
+        //     _recipient != troveManagerAddress &&
+        //     _recipient != troveManagerLiquidationsAddress && 
+        //     _recipient != troveManagerRedemptionsAddress, //&& 
+        //     // _recipient != borrowerOperationsAddress, //
+        //     "YUSD: Cannot transfer tokens directly to the StabilityPool, TroveManager or BorrowerOps"
+        // );
     }
 
-    function _requireCallerIsBorrowerOperations() internal view {
-        require(msg.sender == borrowerOperationsAddress, "YUSDToken: Caller is not BorrowerOperations");
+    function _requireValidMinter() internal view {
+        require(validMinters[msg.sender], "YUSDToken: Caller is not Valid Minter");
     }
 
     function _requireCallerIsBOorTroveMorSP() internal view {

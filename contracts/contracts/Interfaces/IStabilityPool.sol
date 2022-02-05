@@ -73,7 +73,7 @@ interface IStabilityPool is ICollateralReceiver {
     // --- Functions ---
 
     /*
-     * Called only once on init, to set addresses of other Liquity contracts
+     * Called only once on init, to set addresses of other Yeti contracts
      * Callable only by owner, renounces ownership at the end
      */
     function setAddresses(

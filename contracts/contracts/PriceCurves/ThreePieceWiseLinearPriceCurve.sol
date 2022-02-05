@@ -44,7 +44,7 @@ contract ThreePieceWiseLinearPriceCurve is IPriceCurve, Ownable {
     /** 
      * Function for setting slopes and intercepts of linear functions used for fee calculations. 
      */
-    function adjustParams(string memory _name, uint256 _m1, uint256 _b1, uint256 _m2, uint256 _cutoff1, uint256 _m3, uint256 _cutoff2, uint _dollarCap) external onlyOwner {
+    function adjustParams(string memory _name, uint256 _m1, uint256 _b1, uint256 _m2, uint256 _cutoff1, uint256 _m3, uint256 _cutoff2, uint _dollarCap, uint _decayTime) external onlyOwner {
         require(_cutoff1 <= _cutoff2, "Cutoffs must be increasing");
         name = _name;
         m1 = _m1;
@@ -71,8 +71,8 @@ contract ThreePieceWiseLinearPriceCurve is IPriceCurve, Ownable {
         }
         // b3 = _m2.mul(_cutoff2).div(1e18).add(b2).sub(_m3.mul(_cutoff2).div(1e18));
         cutoff2 = _cutoff2;
-        dollarCap = _dollarCap; // Cap in VC terms of max of this asset. dollarCap = 0 means no cap. No cap.
-        decayTime = 5 days;
+        dollarCap = _dollarCap; // Cap in VC terms of max of this asset. dollarCap = 0 means no cap.
+        decayTime = _decayTime; // like 5 days = 432000 in unix time. 
     }
 
     // Set the whitelist address so that the fee can only be updated by whitelistAddress
@@ -85,6 +85,11 @@ contract ThreePieceWiseLinearPriceCurve is IPriceCurve, Ownable {
     // Set the decay time in seconds
     function setDecayTime(uint _decayTime) external override onlyOwner {
         decayTime = _decayTime;
+    }
+
+    // Set the dollar cap in VC terms
+    function setDollarCap(uint _dollarCap) external override onlyOwner {
+        dollarCap = _dollarCap;
     }
 
     // Gets the fee cap and time currently. Used for setting new values for next price curve. 
@@ -107,46 +112,38 @@ contract ThreePieceWiseLinearPriceCurve is IPriceCurve, Ownable {
      * @param _totalCollateralVCBalance is how much collateral is in the system
      * @param _totalVCBalancePost is how much VC the system for all collaterals after all adjustments (additions, subtractions)
      */
-    function getFee(uint256 _collateralVCInput, uint256 _totalCollateralVCBalance, uint256 _totalVCBalancePre, uint256 _totalVCBalancePost) override external view returns (uint256 fee) {
-        // If dollarCap == 0, then it is not capped. Otherwise, then the total + the total input must be less than the cap.
-        uint256 cachedDollarCap = dollarCap;
-        if (cachedDollarCap != 0) {
-            require(_totalCollateralVCBalance.add(_collateralVCInput) <= cachedDollarCap, "Collateral input exceeds cap");
-        }
-
-        uint feePre = _getFeePoint(_totalCollateralVCBalance, _totalVCBalancePre);
-        uint feePost = _getFeePoint(_totalCollateralVCBalance.add(_collateralVCInput), _totalVCBalancePost);
-
-        uint decayedLastFee = calculateDecayedFee();
-        uint feeCalculated = _max((feePre.add(feePost)).div(2), decayedLastFee);
-
-        return feeCalculated;
+    function getFee(uint256 _collateralVCInput, uint256 _totalCollateralVCBalance, uint256 _totalVCBalancePre, uint256 _totalVCBalancePost) override external view returns (uint256 feeCalculated) {
+        feeCalculated = _getFee(_collateralVCInput, _totalCollateralVCBalance, _totalVCBalancePre, _totalVCBalancePost);
     }
 
     // Called only by whitelist. Updates the last fee time and last fee percent
-    function getFeeAndUpdate(uint256 _collateralVCInput, uint256 _totalCollateralVCBalance, uint256 _totalVCBalancePre, uint256 _totalVCBalancePost) override external returns (uint256) {
+    function getFeeAndUpdate(uint256 _collateralVCInput, uint256 _totalCollateralVCBalance, uint256 _totalVCBalancePre, uint256 _totalVCBalancePost) override external returns (uint256 feeCalculated) {
         require(msg.sender == whitelistAddress, "Only whitelist can update fee");
+        feeCalculated = _getFee(_collateralVCInput, _totalCollateralVCBalance, _totalVCBalancePre, _totalVCBalancePost);
+        lastFeeTime = block.timestamp;
+        lastFeePercent = feeCalculated;
+    }
+
+    function _getFee(uint256 _collateralVCInput, uint256 _totalCollateralVCBalance, uint256 _totalVCBalancePre, uint256 _totalVCBalancePost) internal view returns (uint256 feeCalculated) {
         // If dollarCap == 0, then it is not capped. Otherwise, then the total + the total input must be less than the cap.
         uint256 cachedDollarCap = dollarCap;
         if (cachedDollarCap != 0) {
             require(_totalCollateralVCBalance.add(_collateralVCInput) <= cachedDollarCap, "Collateral input exceeds cap");
         }
+
         uint feePre = _getFeePoint(_totalCollateralVCBalance, _totalVCBalancePre);
         uint feePost = _getFeePoint(_totalCollateralVCBalance.add(_collateralVCInput), _totalVCBalancePost);
 
         uint decayedLastFee = calculateDecayedFee();
-        uint feeCalculated = _max((feePre.add(feePost)).div(2), decayedLastFee);
-
-        lastFeeTime = block.timestamp;
-        lastFeePercent = feeCalculated;
-        return feeCalculated;
+        // Cap fee at 100%, but also at least decayedLastFee
+        feeCalculated = _min(1e18, _max((feePre.add(feePost)).div(2), decayedLastFee));
     }
 
     /** 
      * Function for getting the fee for a particular collateral type based on percent of YUSD backed
      * by this asset. 
      */
-    function _getFeePoint(uint256 _collateralVCBalance, uint256 _totalVCBalance) internal view returns (uint256 fee) {
+    function _getFeePoint(uint256 _collateralVCBalance, uint256 _totalVCBalance) internal view returns (uint256) {
         if (_totalVCBalance == 0) {
             return 0;
         }
@@ -162,23 +159,22 @@ contract ThreePieceWiseLinearPriceCurve is IPriceCurve, Ownable {
             } else {
                 return _min(m2.mul(percentBacked).div(1e18).add(b2), 1e18);
             }
-            // return _min(m2.mul(percentBacked).div(1e18).add(b2), 1e18);
         } else { // use function 3
             if (b3Negative) {
                 return _min(m3.mul(percentBacked).div(1e18).sub(b3), 1e18);
             } else {
                 return _min(m3.mul(percentBacked).div(1e18).add(b3), 1e18);
             }
-            // return _min(m3.mul(percentBacked).div(1e18).add(b3), 1e18);
         }
     }
 
     function calculateDecayedFee() public override view returns (uint256 fee) {
-        uint256 decay = block.timestamp.sub(lastFeeTime);
-        // Decay within bounds of decay time, then decay the fee. 
+        uint256 timeSinceLastFee = block.timestamp.sub(lastFeeTime);
+        // Decay within bounds of decay time
         uint256 cachedDecayTime = decayTime;
-        if (decay <= cachedDecayTime) {
-            fee = lastFeePercent.sub(lastFeePercent.mul(decay).div(cachedDecayTime));
+        if (timeSinceLastFee <= cachedDecayTime) {
+            // Linearly decay based on time since last fee. 
+            fee = lastFeePercent.sub(lastFeePercent.mul(timeSinceLastFee).div(cachedDecayTime));
         } else {
             // If it has been longer than decay time, then reset fee to 0.
             fee = 0;

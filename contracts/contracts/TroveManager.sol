@@ -190,7 +190,6 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
 
         address[] memory borrowers = new address[](1);
         borrowers[0] = _borrower;
-        // calls this.batchLiquidateTroves so nonReentrant works correctly
         troveManagerLiquidations.batchLiquidateTroves(borrowers, msg.sender);
     }
 
@@ -233,8 +232,8 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
         troveColl.tokens = tokens;
         troveColl.amounts = amounts;
 
-        uint ICR = _getICRColls(troveColl, debt);
-        sortedTroves.reInsert(_borrower, ICR, _lowerHint, _upperHint);
+        uint RICR = _getRICRColls(troveColl, debt);
+        sortedTroves.reInsert(_borrower, RICR, _lowerHint, _upperHint); 
     }
 
     // Update position for a set of troves using latest price data. This can be called by anyone.
@@ -297,13 +296,20 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
 
     // --- Helper functions ---
 
-    // Return the current collateral ratio (ICR) of a given Trove.
+    // Return the current individual collateral ratio (ICR) of a given Trove.
     // Takes a trove's pending coll and debt rewards from redistributions into account.
-    function getCurrentICR(address _borrower) external view override returns (uint) {
+    function getCurrentICR(address _borrower) external view override returns (uint ICR) {
         (newColls memory colls, uint currentYUSDDebt) = _getCurrentTroveState(_borrower);
 
-        uint ICR = _getICRColls(colls, currentYUSDDebt);
-        return ICR;
+        ICR = _getICRColls(colls, currentYUSDDebt);
+    }
+
+    // Return the current recovery individual collateral ratio (ICR) of a given Trove.
+    // Takes a trove's pending coll and debt rewards from redistributions into account.
+    function getCurrentRICR(address _borrower) external view override returns (uint RICR) {
+        (newColls memory colls, uint currentYUSDDebt) = _getCurrentTroveState(_borrower);
+
+        RICR = _getRICRColls(colls, currentYUSDDebt);
     }
 
     // Gets current trove state as colls and debt. 
@@ -357,7 +363,7 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
     }
 
     function _updateTroveRewardSnapshots(address _borrower) internal {
-        address[] memory allColls = whitelist.getValidCollateral();
+        address[] memory allColls = Troves[_borrower].colls.tokens;
         uint256 allCollsLen = allColls.length;
         for (uint256 i; i < allCollsLen; ++i) {
             address asset = allColls[i];
@@ -375,14 +381,13 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
     }
 
     // Get the borrower's pending accumulated Coll rewards, earned by their stake
-    // pendingCollRewards.token and pendingCollRewards.amounts are the length of whitelist.getValidCollateral();
     function _getPendingCollRewards(address _borrower) internal view returns (newColls memory pendingCollRewards) {
         if (Troves[_borrower].status != Status.active) {
             newColls memory emptyColls;
             return emptyColls;
         }
 
-        address[] memory allColls = whitelist.getValidCollateral();
+        address[] memory allColls = Troves[_borrower].colls.tokens;
         pendingCollRewards.amounts = new uint[](allColls.length);
         pendingCollRewards.tokens = allColls;
         uint256 allCollsLen = allColls.length;
@@ -406,7 +411,7 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
         if (Troves[_borrower].status != Status.active) {
             return 0;
         }
-        address[] memory allColls = whitelist.getValidCollateral();
+        address[] memory allColls = Troves[_borrower].colls.tokens;
 
         uint256 allCollsLen = allColls.length;
         for (uint256 i; i < allCollsLen; ++i) {
@@ -592,18 +597,18 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
         _requireMoreThanOneTroveInSystem(TroveOwnersArrayLength);
         newColls memory emptyColls;
 
-        Troves[_borrower].status = closedStatus;
-        Troves[_borrower].colls = emptyColls;
-        Troves[_borrower].debt = 0;
 
-        address[] memory allColls = whitelist.getValidCollateral();
+        address[] memory allColls = Troves[_borrower].colls.tokens;        
         uint allCollsLen = allColls.length;
-        address thisAllColls;
         for (uint256 i; i < allCollsLen; ++i) {
-            thisAllColls = allColls[i];
+            address thisAllColls = allColls[i];
             rewardSnapshots[_borrower].CollRewards[thisAllColls] = 0;
             rewardSnapshots[_borrower].YUSDDebts[thisAllColls] = 0;
         }
+
+        Troves[_borrower].status = closedStatus;
+        Troves[_borrower].colls = emptyColls;
+        Troves[_borrower].debt = 0;
 
         _removeTroveOwner(_borrower, TroveOwnersArrayLength);
         sortedTroves.remove(_borrower);
@@ -819,7 +824,7 @@ contract TroveManager is TroveManagerBase, ITroveManager, ReentrancyGuard {
         }
     }
 
-    function _revertWrongFuncCaller() internal view{
+    function _revertWrongFuncCaller() internal pure {
         revert("TM: External caller not allowed");
     }
 

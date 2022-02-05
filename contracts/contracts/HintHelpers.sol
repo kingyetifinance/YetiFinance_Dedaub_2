@@ -70,6 +70,8 @@ contract HintHelpers is LiquityBase, Ownable, CheckContract {
      * will leave it uncapped.
      */
 
+
+// TODO 
     function getRedemptionHints(
         uint _YUSDamount, 
         uint _maxIterations

@@ -12,7 +12,7 @@ import "./Interfaces/ICommunityIssuance.sol";
 import "./Interfaces/IWhitelist.sol";
 import "./Interfaces/IERC20.sol";
 import "./Interfaces/IWAsset.sol";
-import "./Dependencies/LiquityBase.sol";
+import "./Dependencies/PoolBase.sol";
 import "./Dependencies/SafeMath.sol";
 import "./Dependencies/LiquitySafeMath128.sol";
 import "./Dependencies/Ownable.sol";
@@ -149,7 +149,7 @@ import "./Dependencies/SafeERC20.sol";
  * The product P (and snapshot P_t) is re-used, as the ratio P/P_t tracks a deposit's depletion due to liquidations.
  *
  */
-contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
+contract StabilityPool is PoolBase, Ownable, CheckContract, IStabilityPool {
     using LiquitySafeMath128 for uint128;
     using SafeERC20 for IERC20;
 
@@ -476,8 +476,7 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
             return;
         }
 
-        uint256 YETIPerUnitStaked;
-        YETIPerUnitStaked = _computeYETIPerUnitStaked(_YETIIssuance, totalYUSD);
+        uint256 YETIPerUnitStaked = _computeYETIPerUnitStaked(_YETIIssuance, totalYUSD);
 
         uint256 marginalYETIGain = YETIPerUnitStaked.mul(P);
         epochToScaleToG[currentEpoch][currentScale] = epochToScaleToG[currentEpoch][currentScale]
@@ -944,11 +943,12 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
     ) internal {
         uint256 assetsLen = assets.length;
         require(assetsLen == amounts.length, "SP:Length mismatch");
-        uint256 thisAmounts;
-        address thisAsset;
         for (uint256 i; i < assetsLen; ++i) {
-            thisAmounts = amounts[i];
-            thisAsset = assets[i];
+            uint256 thisAmounts = amounts[i];
+            if (thisAmounts == 0) {
+                continue;
+            }
+            address thisAsset = assets[i];
             if (whitelist.isWrapped(thisAsset)) {
                 // In this case update the rewards from the treasury to the caller 
                 IWAsset(thisAsset).endTreasuryReward(address(this), thisAmounts);
@@ -1085,7 +1085,7 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
     // --- 'require' functions ---
 
     function _requireNoUnderCollateralizedTroves() internal view {
-        address lowestTrove = sortedTroves.getLast();
+        address lowestTrove = sortedTroves.getLast(); // todo confirm this is ok
         uint256 ICR = troveManager.getCurrentICR(lowestTrove);
         require(ICR >= MCR, "SP:No Withdraw when troveICR<MCR");
     }
@@ -1142,7 +1142,7 @@ contract StabilityPool is LiquityBase, Ownable, CheckContract, IStabilityPool {
         }
     }
 
-    function _revertWrongFuncCaller() internal view {
+    function _revertWrongFuncCaller() internal pure {
         revert("SP: External caller not allowed");
     }
 

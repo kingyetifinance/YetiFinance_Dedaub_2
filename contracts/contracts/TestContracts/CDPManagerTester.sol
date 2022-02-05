@@ -8,6 +8,8 @@ import "../TroveManager.sol";
 for testing the parent's internal functions. */
 
 contract TroveManagerTester is TroveManager {
+    
+    uint constant public PERCENT_DIVISOR = 200; // dividing by 200 yields 0.5%
 
     function computeICR(address[] memory _tokens, uint[] memory _amounts, uint _debt) external view returns (uint) {
         uint sumCollateralVCs;

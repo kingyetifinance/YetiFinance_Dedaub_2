@@ -15,4 +15,6 @@ interface IDefaultPool is IPool {
     function sendCollsToActivePool(address[] memory _collaterals, uint[] memory _amounts, address _borrower) external;
     function addCollateralType(address _collateral) external;
     function getCollateralVC(address collateralAddress) external view returns (uint);
+
+    function getAllAmounts() external view returns (uint256[] memory);
 }

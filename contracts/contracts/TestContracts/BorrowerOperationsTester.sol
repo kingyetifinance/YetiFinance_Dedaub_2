@@ -9,6 +9,8 @@ for testing the parent's internal functions. */
 contract BorrowerOperationsTester is BorrowerOperations {
 
 
+    event Sum(address[] tokens, uint[] amounts);
+
     function getNewICRFromTroveChange
     (
         uint _newVC,
@@ -35,7 +37,7 @@ contract BorrowerOperationsTester is BorrowerOperations {
     view
     returns (uint) 
     {
-        return _getNewTCRFromTroveChange(_collChange, isCollIncrease, _debtChange, isDebtIncrease);
+        return _getNewTCRFromTroveChange(getEntireSystemColl(), getEntireSystemDebt(), _collChange, isCollIncrease, _debtChange, isDebtIncrease);
     }
 
     function getVC(address[] memory _tokens, uint[] memory _amounts) external view returns (uint) {
@@ -45,12 +47,19 @@ contract BorrowerOperationsTester is BorrowerOperations {
     function sumColls(address[] memory _tokens1, uint[] memory _amounts1, 
         address[] memory _tokens2, uint[] memory _amounts2) 
         external view returns (address[] memory, uint[] memory) {
-        newColls memory result =  _sumColls(_tokens1, _amounts1, _tokens2, _amounts2);
+        newColls memory result =  _sumColls(newColls(_tokens1, _amounts1), newColls(_tokens2, _amounts2));
         return (result.tokens, result.amounts);
     }
 
     function get_MIN_NET_DEBT() external pure returns (uint) {
         return MIN_NET_DEBT;
+    }
+
+    // call _subColls
+    function subColls(address[] memory _tokens1, uint[] memory _amounts1,
+        address[] memory _tokens2, uint[] memory _amounts2) external {
+        newColls memory diff = _subColls(newColls(_tokens1, _amounts1), _tokens2, _amounts2);
+        emit Sum(diff.tokens, diff.amounts);
     }
 
     // Payable fallback function

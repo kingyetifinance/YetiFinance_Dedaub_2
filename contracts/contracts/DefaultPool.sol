@@ -10,7 +10,7 @@ import "./Interfaces/IWAsset.sol";
 import "./Dependencies/SafeMath.sol";
 import "./Dependencies/Ownable.sol";
 import "./Dependencies/CheckContract.sol";
-import "./Dependencies/YetiCustomBase.sol";
+import "./Dependencies/PoolBase2.sol";
 import "./Dependencies/SafeERC20.sol";
 
 /*
@@ -20,7 +20,7 @@ import "./Dependencies/SafeERC20.sol";
  * When a trove makes an operation that applies its pending collateral and YUSD debt, its pending collateral and YUSD debt is moved
  * from the Default Pool to the Active Pool.
  */
-contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
+contract DefaultPool is Ownable, CheckContract, IDefaultPool, PoolBase2 {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -86,6 +86,10 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
         return (poolColl.tokens, poolColl.amounts);
     }
 
+    function getAllAmounts() external view override returns (uint256[] memory) {
+        return poolColl.amounts;
+    }
+
     // returns the VC value of a given collateralAddress in this contract
     function getCollateralVC(address _collateral) external view override returns (uint) {
         return whitelist.getValueVC(_collateral, getCollateral(_collateral));
@@ -100,13 +104,24 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
      * multiplying them by the corresponding price and ratio and then summing that
      */
     function getVC() external view override returns (uint256 totalVC) {
-        uint256 tokensLen = poolColl.tokens.length;
-        for (uint256 i; i < tokensLen; ++i) {
+        uint256 len = poolColl.tokens.length;
+        for (uint256 i; i < len; ++i) {
             address collateral = poolColl.tokens[i];
             uint256 amount = poolColl.amounts[i];
 
-            uint256 collateralVC = whitelist.getValueVC(collateral, amount);
-            totalVC = totalVC.add(collateralVC);
+            totalVC = totalVC.add(whitelist.getValueVC(collateral, amount));
+        }
+    }
+
+    function getVCforTCR() external view override returns (uint totalVC, uint totalVCforTCR) {
+        uint len = poolColl.tokens.length;
+        for (uint256 i; i < len; ++i) {
+            address collateral = poolColl.tokens[i];
+            uint amount = poolColl.amounts[i];
+
+            (uint256 VC, uint256 VCforTCR) = whitelist.getValueVCforTCR(collateral, amount);
+            totalVC = totalVC.add(VC);
+            totalVCforTCR = totalVCforTCR.add(VCforTCR);
         }
     }
 
@@ -135,12 +150,10 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
         _requireCallerIsTroveManager();
         uint256 tokensLen = _tokens.length;
         require(tokensLen == _amounts.length, "DP:Length mismatch");
-        uint256 thisAmounts;
-        address thisToken;
         for (uint256 i; i < tokensLen; ++i) {
-            thisAmounts = _amounts[i];
+            uint256 thisAmounts = _amounts[i];
             if(thisAmounts != 0) {
-                thisToken = _tokens[i];
+                address thisToken = _tokens[i];
                 
                 // If asset is wrapped, then that means it came from the active pool (originally) and we need to update rewards from 
                 // the treasury which would have owned the rewards, to the new borrower who will be accumulating this new 
@@ -196,7 +209,7 @@ contract DefaultPool is Ownable, CheckContract, IDefaultPool, YetiCustomBase {
         }
     }
 
-    function _revertWrongFuncCaller() internal view{
+    function _revertWrongFuncCaller() internal pure {
         revert("DP: External caller not allowed");
     }
 

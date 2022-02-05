@@ -151,6 +151,9 @@ contract WJLP is ERC20_8, IWAsset {
             require(msg.sender == _from, "WJLP: msg.sender and _from must be the same");
         }
 
+        // Claim pending rewards for the reward recipient
+        _sendJoeReward(_rewardRecipient, _rewardRecipient);
+
         JLP.transferFrom(_from, address(this), _amount);
 
         JLP.safeApprove(address(_MasterChefJoe), 0);
@@ -187,29 +190,6 @@ contract WJLP is ERC20_8, IWAsset {
         JLP.safeTransfer(msg.sender, _amount);
     }
 
-    // Override function which allows us to check the amount of LP tokens a user actually has rewards for, and update 
-    // that amount so that a user can't keep depositing into the protocol using the same reward amount
-    function transferFrom(address _from, address _to, uint _amount) public override returns (bool success) {
-        if (msg.sender == borrowerOperations || msg.sender == activePool || msg.sender == defaultPool) {
-            UserInfo memory user = userInfo[_from];
-            require(user.amount - user.amountInYeti >= _amount, "Reward balance not sufficient to transfer into Yeti Finance");
-            user.amountInYeti += _amount;
-        }
-        return super.transferFrom(_from, _to, _amount);
-    }
-
-    // Override function which allows us to check the amount of LP tokens a user actually has rewards for, and update 
-    // that amount so that a user can't keep depositing into the protocol using the same reward amount
-    function transfer(address _to, uint _amount) public override returns (bool success) {
-        if (msg.sender == borrowerOperations || msg.sender == activePool || msg.sender == defaultPool) {
-            if (_to != stabilityPool && _to != defaultPool && _to != collSurplusPool){
-                UserInfo memory user = userInfo[msg.sender];
-                require(user.amount - user.amountInYeti >= _amount, "Reward balance not sufficient to transfer into Yeti Finance");
-                user.amountInYeti += _amount;
-            }
-        }
-        return super.transfer(_to, _amount);
-    }
 
     // Only callable by ActivePool or StabilityPool
     // Used to unwrap assets during:
@@ -242,6 +222,31 @@ contract WJLP is ERC20_8, IWAsset {
         // Transfer withdrawn JLP tokens to new owner. 
         JLP.safeTransfer(_to, _amount);
     }
+
+    // Override function which allows us to check the amount of LP tokens a user actually has rewards for, and update 
+    // that amount so that a user can't keep depositing into the protocol using the same reward amount
+    function transferFrom(address _from, address _to, uint _amount) public override returns (bool success) {
+        if (msg.sender == borrowerOperations || msg.sender == activePool || msg.sender == defaultPool) {
+            UserInfo memory user = userInfo[_from];
+            require(user.amount - user.amountInYeti >= _amount, "Reward balance not sufficient to transfer into Yeti Finance");
+            user.amountInYeti += _amount;
+        }
+        return super.transferFrom(_from, _to, _amount);
+    }
+
+    // Override function which allows us to check the amount of LP tokens a user actually has rewards for, and update 
+    // that amount so that a user can't keep depositing into the protocol using the same reward amount
+    function transfer(address _to, uint _amount) public override returns (bool success) {
+        if (msg.sender == borrowerOperations || msg.sender == activePool || msg.sender == defaultPool) {
+            if (_to != stabilityPool && _to != defaultPool && _to != collSurplusPool){
+                UserInfo memory user = userInfo[msg.sender];
+                require(user.amount - user.amountInYeti >= _amount, "Reward balance not sufficient to transfer into Yeti Finance");
+                user.amountInYeti += _amount;
+            }
+        }
+        return super.transfer(_to, _amount);
+    }
+
 
     // When funds are transferred into the stabilityPool on liquidation,
     // the rewards these funds are earning are allocated Yeti Finance Treasury.

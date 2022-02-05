@@ -27,14 +27,15 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
 
     struct CollateralParams {
         // Safety ratio
-        uint256 ratio; // 10**18 * the ratio. i.e. ratio = .95 * 10**18 for 95%. More risky collateral has a lower ratio
+        uint256 safetyRatio; // 10**18 * the ratio. i.e. ratio = .95 * 10**18 for 95%. More risky collateral has a lower ratio
+        uint256 recoveryRatio;
         address oracle;
         uint256 decimals;
         address priceCurve;
         uint256 index;
+        address defaultRouter;
         bool active;
         bool isWrapped;
-        address defaultRouter;
     }
 
     IActivePool activePool;
@@ -44,21 +45,24 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     address borrowerOperationsAddress;
     bool private addressesSet;
 
+    mapping(address => address) validCallers;
+    mapping(address => bool) pendingLockCallers;
+    mapping(address => bool) cannotUpdateValidCaller;
+
     mapping(address => CollateralParams) public collateralParams;
-
-    mapping(address => bool) public validRouter;
-
     // list of all collateral types in collateralParams (active and deprecated)
     // Addresses for easy access
     address[] public validCollateral; // index maps to token address.
 
+    uint256 maxCollsInTrove = 50; // TODO: update to a reasonable number
+
     event CollateralAdded(address _collateral);
     event CollateralDeprecated(address _collateral);
     event CollateralUndeprecated(address _collateral);
-    event CollateralRemoved(address _collateral);
-    event OracleChanged(address _collateral);
-    event PriceCurveChanged(address _collateral);
-    event RatioChanged(address _collateral);
+    event OracleChanged(address _collateral, address _newOracle);
+    event PriceCurveChanged(address _collateral, address _newPriceCurve);
+    event SafetyRatioChanged(address _collateral, uint256 _newSafetyRatio);
+    event RecoveryRatioChanged(address _collateral, uint256 _newRecoveryRatio);
 
     // Require that the collateral exists in the whitelist. If it is not the 0th index, and the
     // index is still 0 then it does not exist in the mapping.
@@ -68,7 +72,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         _;
     }
 
-    // Calling from here makes it not inline, reducing contract size and gas. 
+    // Calling from here makes it not inline, reducing contract size significantly. 
     function _exists(address _collateral) internal view {
         if (validCollateral[0] != _collateral) {
             require(collateralParams[_collateral].index != 0, "collateral does not exist");
@@ -101,7 +105,8 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
 
     function addCollateral(
         address _collateral,
-        uint256 _minRatio,
+        uint256 _safetyRatio,
+        uint256 _recoveryRatio,
         address _oracle,
         uint256 _decimals,
         address _priceCurve, 
@@ -114,7 +119,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         checkContract(_routerAddress);
         // If collateral list is not 0, and if the 0th index is not equal to this collateral,
         // then if index is 0 that means it is not set yet.
-        require(_minRatio < 11e17, "ratio must be less than 1.10"); //=> greater than 1.1 would mean taking out more YUSD than collateral VC
+        require(_safetyRatio < 11e17, "ratio must be less than 1.10"); //=> greater than 1.1 would mean taking out more YUSD than collateral VC
 
         if (validCollateral.length != 0) {
             require(validCollateral[0] != _collateral && collateralParams[_collateral].index == 0, "collateral already exists");
@@ -122,14 +127,15 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
 
         validCollateral.push(_collateral);
         collateralParams[_collateral] = CollateralParams(
-            _minRatio,
+            _safetyRatio,
+            _recoveryRatio,
             _oracle,
             _decimals,
             _priceCurve,
             validCollateral.length - 1, 
+            _routerAddress,
             true,
-            _isWrapped,
-            _routerAddress
+            _isWrapped
         );
 
         activePool.addCollateralType(_collateral);
@@ -139,6 +145,8 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
 
         // throw event
         emit CollateralAdded(_collateral);
+        emit SafetyRatioChanged(_collateral, _safetyRatio);
+        emit RecoveryRatioChanged(_collateral, _recoveryRatio);
     }
 
     /**
@@ -184,7 +192,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         collateralParams[_collateral].oracle = _oracle;
 
         // throw event
-        emit OracleChanged(_collateral);
+        emit OracleChanged(_collateral, _oracle);
     }
 
     /**
@@ -197,31 +205,43 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     {
         checkContract(_collateral);
         checkContract(_priceCurve);
-        uint lastFeePercent;
-        uint lastFeeTime; 
-        (lastFeePercent, lastFeeTime) = IPriceCurve(collateralParams[_collateral].priceCurve).getFeeCapAndTime();
+
+        (uint256 lastFeePercent, uint256 lastFeeTime) = IPriceCurve(collateralParams[_collateral].priceCurve).getFeeCapAndTime();
         IPriceCurve(_priceCurve).setFeeCapAndTime(lastFeePercent, lastFeeTime);
         collateralParams[_collateral].priceCurve = _priceCurve;
 
         // throw event
-        emit PriceCurveChanged(_collateral);
+        emit PriceCurveChanged(_collateral, _priceCurve);
     }
 
     /**
      * Function to change Safety ratio.
      */
-    function changeRatio(address _collateral, uint256 _ratio)
+    function changeSafetyRatio(address _collateral, uint256 _newSafetyRatio)
         external
         exists(_collateral)
         onlyOwner
     {
-        checkContract(_collateral);
-        require(_ratio < 11e17, "ratio must be less than 1.10"); //=> greater than 1.1 would mean taking out more YUSD than collateral VC
-        require(collateralParams[_collateral].ratio < _ratio, "New SR must be greater than previous SR");
-        collateralParams[_collateral].ratio = _ratio;
+        require(_newSafetyRatio < 11e17, "ratio must be less than 1.10"); //=> greater than 1.1 would mean taking out more YUSD than collateral VC
+        require(collateralParams[_collateral].safetyRatio < _newSafetyRatio, "New SR must be greater than previous SR");
+        collateralParams[_collateral].safetyRatio = _newSafetyRatio;
 
         // throw event
-        emit RatioChanged(_collateral);
+        emit SafetyRatioChanged(_collateral, _newSafetyRatio);
+    }
+
+    /**
+     * Function to change Stable Adjusted Safety ratio. 
+     */
+    function changeRecoveryRatio(address _collateral, uint256 _newRecoveryRatio)
+        external
+        exists(_collateral)
+        onlyOwner
+    {
+        collateralParams[_collateral].recoveryRatio = _newRecoveryRatio;
+
+        // throw event
+        emit RecoveryRatioChanged(_collateral, _newRecoveryRatio);
     }
 
     // -----------Routers--------------
@@ -238,11 +258,6 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
 
     // ---------- View Functions -----------
 
-
-    function isValidRouter(address _router) external override view returns (bool) {
-        return validRouter[_router];
-    }
-
     function isWrapped(address _collateral) external view override returns (bool) {
         return collateralParams[_collateral].isWrapped;
     }
@@ -251,14 +266,26 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         return validCollateral;
     }
 
-    function getRatio(address _collateral)
+    // Get safety ratio used in VC Calculation
+    function getSafetyRatio(address _collateral)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        return collateralParams[_collateral].safetyRatio;
+    }
+
+    // Get safety ratio used in TCR calculation, as well as for redemptions. 
+    // Often similar to Safety Ratio except for stables.
+    function getRecoveryRatio(address _collateral)
         external
         view
         override
         exists(_collateral)
         returns (uint256)
     {
-        return collateralParams[_collateral].ratio;
+        return collateralParams[_collateral].recoveryRatio;
     }
 
     function getOracle(address _collateral)
@@ -315,19 +342,19 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
     function getFee(
         address _collateral,
         uint256 _collateralVCInput,
-        uint256 _collateralVCBalancePost,
+        uint256 _collateralVCSystemBalance,
         uint256 _totalVCBalancePre,
         uint256 _totalVCBalancePost
     ) external view override exists(_collateral) returns (uint256 fee) {
         IPriceCurve priceCurve = IPriceCurve(collateralParams[_collateral].priceCurve);
-        return priceCurve.getFee(_collateralVCInput, _collateralVCBalancePost, _totalVCBalancePre, _totalVCBalancePost);
+        return priceCurve.getFee(_collateralVCInput, _collateralVCSystemBalance, _totalVCBalancePre, _totalVCBalancePost);
     }
 
     // Returned as fee percentage * 10**18. Non view function for just borrower operations to call.
     function getFeeAndUpdate(
         address _collateral,
         uint256 _collateralVCInput,
-        uint256 _collateralVCBalancePost,
+        uint256 _collateralVCSystemBalance,
         uint256 _totalVCBalancePre,
         uint256 _totalVCBalancePost
     ) external override exists(_collateral) returns (uint256 fee) {
@@ -339,7 +366,7 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         return
             priceCurve.getFeeAndUpdate(
                 _collateralVCInput,
-                _collateralVCBalancePost,
+                _collateralVCSystemBalance,
                 _totalVCBalancePre,
                 _totalVCBalancePost
             );
@@ -350,7 +377,6 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         public
         view
         override
-        exists(_collateral)
         returns (uint256)
     {
         IPriceFeed collateral_priceFeed = IPriceFeed(collateralParams[_collateral].oracle);
@@ -362,7 +388,27 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         external
         view
         override
-        exists(_collateral)
+        returns (uint256)
+    {
+        return _getValueUSD(_collateral, _amount);
+    }
+
+    // Aggregates all usd values of passed in collateral / amounts
+    function getValuesUSD(address[] memory _collaterals, uint256[] memory _amounts)
+        external
+        view
+        override
+        returns (uint256 USDValue)
+    {
+        uint256 tokensLen = _collaterals.length;
+        for (uint i; i < tokensLen; ++i) {
+            USDValue = USDValue.add(_getValueUSD(_collaterals[i], _amounts[i]));
+        }
+    }
+
+    function _getValueUSD(address _collateral, uint256 _amount)
+        internal
+        view
         returns (uint256)
     {
         uint256 decimals = collateralParams[_collateral].decimals;
@@ -375,19 +421,135 @@ contract Whitelist is Ownable, IWhitelist, IBaseOracle, CheckContract {
         external
         view
         override
-        exists(_collateral)
         returns (uint256)
     {
-        // uint256 price = getPrice(_collateral);
-        // uint256 decimals = collateralParams[_collateral].decimals;
-        // uint256 ratio = collateralParams[_collateral].ratio;
-        // return (price.mul(_amount).mul(ratio).div(10**(18 + decimals)));
+        return _getValueVC(_collateral, _amount);
+    }
 
-        // div by 10**18 for price adjustment
-        // and divide by 10 ** decimals for decimal adjustment
-        // do inline since this function is called often
-        return ((getPrice(_collateral)).mul(_amount).mul(collateralParams[_collateral].ratio).div(10**(18 + collateralParams[_collateral].decimals)));
+    function getValuesVC(address[] memory _collaterals, uint256[] memory _amounts)
+        external
+        view
+        override
+        returns (uint256 VCValue)
+    {
+        uint256 tokensLen = _collaterals.length;
+        for (uint i; i < tokensLen; ++i) {
+            VCValue = VCValue.add(_getValueVC(_collaterals[i], _amounts[i]));
+        }
+    }
+
+    function _getValueVC(address _collateral, uint256 _amount) 
+        internal 
+        view 
+        returns (uint256) {
+        // Multiply price by amount and safety ratio to get in VC terms, as well as dividing by amount of decimals to normalize. 
+        return ((getPrice(_collateral)).mul(_amount).mul(collateralParams[_collateral].safetyRatio).div(10**(18 + collateralParams[_collateral].decimals)));
+    }
+
+    // Gets the value of that collateral type, of that amount, in Recovery VC terms.
+    function getValueRVC(address _collateral, uint256 _amount)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        return _getValueRVC(_collateral, _amount);
+    }
+
+    function getValuesRVC(address[] memory _collaterals, uint256[] memory _amounts)
+        external
+        view
+        override
+        returns (uint256 RVCValue)
+    {
+        uint256 tokensLen = _collaterals.length;
+        for (uint i; i < tokensLen; ++i) {
+            RVCValue = RVCValue.add(_getValueRVC(_collaterals[i], _amounts[i]));
+        }
+    }
+
+    function _getValueRVC(address _collateral, uint256 _amount) 
+        internal 
+        view 
+        returns (uint256) {
+        // Multiply price by amount and recovery ratio to get in Recovery VC terms, as well as dividing by amount of decimals to normalize. 
+        return ((getPrice(_collateral)).mul(_amount).mul(collateralParams[_collateral].recoveryRatio).div(10**(18 + collateralParams[_collateral].decimals)));
+    }
+
+    // Gets the TCR value of that collateral type, of that amount, in TCR VC terms. Also returns the regular Value VC. 
+    // Used in the active pool and default pool VC calculations. 
+    function getValueVCforTCR(address _collateral, uint256 _amount)
+        external
+        view
+        override
+        returns (uint256, uint256)
+    {
+        return _getValueVCforTCR(_collateral, _amount);
+    }
+
+    function getValuesVCforTCR(address[] memory _collaterals, uint256[] memory _amounts)
+        external
+        view
+        override
+        returns (uint256 VCValue, uint256 RVCValue)
+    {
+        uint256 tokensLen = _collaterals.length;
+        for (uint i; i < tokensLen; ++i) {
+            (uint256 tempVCValue, uint256 tempRVCValue) = _getValueVCforTCR(_collaterals[i], _amounts[i]);
+            VCValue = VCValue.add(tempVCValue);
+            RVCValue = RVCValue.add(tempRVCValue);
+        }
+    }
+
+    function _getValueVCforTCR(address _collateral, uint256 _amount) 
+        internal 
+        view 
+        returns (uint256 VC, uint256 VCforTCR) {
+        uint256 price = getPrice(_collateral);
+        uint256 decimals = collateralParams[_collateral].decimals;
+        uint256 safetyRatio = collateralParams[_collateral].safetyRatio;
+        uint256 recoveryRatio = collateralParams[_collateral].recoveryRatio;
+        VC = price.mul(_amount).mul(safetyRatio).div(10**(18 + decimals));
+        VCforTCR = price.mul(_amount).mul(recoveryRatio).div(10**(18 + decimals));
     }
 
 
+    // ===== Contract Callers ======
+
+    /* msg.sender is the Yeti contract calling this function
+     * _caller is the caller of that contract on the Yeti contract
+     * this function confirms whether the caller of the Yeti Contract is
+     * allowed to call that function
+     */
+    function isValidCaller(address _caller) external override view returns (bool) {
+        return (validCallers[msg.sender] == _caller);
+    }
+
+
+    function getValidCaller(address _contract) external override view returns (address) {
+        return validCallers[_contract];
+    }
+
+    // Changing/Locking Contract Callers:
+
+    function updateValidCaller(address _contract, address _caller) onlyOwner external {
+        require(!cannotUpdateValidCaller[_contract], "cannot update valid caller of this contract");
+        validCallers[_contract] = _caller;
+    }
+
+
+    function updatePendingLockCaller(address _contract, bool _lock) onlyOwner external {
+        pendingLockCallers[_contract] = _lock;
+    }
+
+
+    function lockCaller(address _contract) onlyOwner external {
+        cannotUpdateValidCaller[_contract] = pendingLockCallers[_contract];
+    }
+
+    // Max Colls in Trove Functions
+
+    function updateMaxCollsInTrove(uint _newMax) onlyOwner external {
+        maxCollsInTrove = _newMax;
+    }
 }

@@ -9,8 +9,10 @@ import "./Interfaces/IWAsset.sol";
 import "./Dependencies/SafeMath.sol";
 import "./Dependencies/Ownable.sol";
 import "./Dependencies/CheckContract.sol";
-import "./Dependencies/YetiCustomBase.sol";
+import "./Dependencies/PoolBase2.sol";
 import "./Dependencies/SafeERC20.sol";
+
+import "./Interfaces/IDefaultPool.sol";
 
 /*
  * The Active Pool holds the all collateral and YUSD debt (but not YUSD tokens) for all active troves.
@@ -19,7 +21,7 @@ import "./Dependencies/SafeERC20.sol";
  * Stability Pool, the Default Pool, or both, depending on the liquidation conditions.
  *
  */
-contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
+contract ActivePool is Ownable, CheckContract, IActivePool, PoolBase2 {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -96,8 +98,6 @@ contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
     // --- Getters for public variables. Required by IPool interface ---
 
     /*
-    * Returns the collateralBalance for a given collateral
-    *
     * Returns the amount of a given collateral in state. Not necessarily the contract's actual balance.
     */
     function getCollateral(address _collateral) public view override returns (uint) {
@@ -125,15 +125,49 @@ contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
     * Computed when called by taking the collateral balances and
     * multiplying them by the corresponding price and ratio and then summing that
     */
-    function getVC() external view override returns (uint totalVC) {
+    function getVC() external view override returns (uint256 totalVC) {
         uint len = poolColl.tokens.length;
         for (uint256 i; i < len; ++i) {
-            address collateral = poolColl.tokens[i];
             uint amount = poolColl.amounts[i];
 
-            uint collateralVC = whitelist.getValueVC(collateral, amount);
+            totalVC = totalVC.add(whitelist.getValueVC(poolColl.tokens[i], amount));
+        }
+    }
 
-            totalVC = totalVC.add(collateralVC);
+    // Function for aggregating active pool and default pool amounts when looping through.
+    function getVCSystem() external view override returns (uint256 totalVCSystem) {
+        uint len = poolColl.tokens.length;
+        uint256[] memory defaultPoolAmounts = IDefaultPool(defaultPoolAddress).getAllAmounts();
+        for (uint256 i; i < len; ++i) {
+            uint amount = poolColl.amounts[i].add(defaultPoolAmounts[i]);
+
+            totalVCSystem = totalVCSystem.add(whitelist.getValueVC(poolColl.tokens[i], amount));
+        }
+    }
+
+    // Function for getting the VC value but using the Recovery ratio instead of the safety ratio
+    function getVCforTCR() external view override returns (uint256 totalVC, uint256 totalVCforTCR) {
+        uint len = poolColl.tokens.length;
+        for (uint256 i; i < len; ++i) {
+            uint amount = poolColl.amounts[i];
+
+            (uint256 VC, uint256 VCforTCR) = whitelist.getValueVCforTCR(poolColl.tokens[i], amount);
+            totalVC = totalVC.add(VC);
+            totalVCforTCR = totalVCforTCR.add(VCforTCR);
+        }
+    }
+
+    // Function for getting the VC value but using the Recovery ratio instead of the safety ratio
+    // Aggregates active pool and default pool amounts in one function loop. 
+    function getVCforTCRSystem() external view override returns (uint256 totalVC, uint256 totalVCforTCR) {
+        uint len = poolColl.tokens.length;
+        uint256[] memory defaultPoolAmounts = IDefaultPool(defaultPoolAddress).getAllAmounts();
+        for (uint256 i; i < len; ++i) {
+            uint amount = poolColl.amounts[i].add(defaultPoolAmounts[i]);
+
+            (uint256 VC, uint256 VCforTCR) = whitelist.getValueVCforTCR(poolColl.tokens[i], amount);
+            totalVC = totalVC.add(VC);
+            totalVCforTCR = totalVCforTCR.add(VCforTCR);
         }
     }
 
@@ -155,14 +189,14 @@ contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
         emit CollateralSent(_collateral, _to, _amount);
     }
 
-    // Returns true if all payments were successfully sent. Must be called by borrower operations, trove manager, or stability pool. 
-    function sendCollaterals(address _to, address[] calldata _tokens, uint[] calldata _amounts) external override returns (bool) {
+    // Function sends collaterals from active pool.
+    // Must be called by borrower operations, trove manager, or stability pool.
+    function sendCollaterals(address _to, address[] calldata _tokens, uint[] calldata _amounts) external override {
         _requireCallerIsBOorTroveMorTMLorSP();
         uint256 len = _tokens.length;
         require(len == _amounts.length, "AP:Lengths");
-        uint256 thisAmount;
         for (uint256 i; i < len; ++i) {
-            thisAmount = _amounts[i];
+            uint256 thisAmount = _amounts[i];
             if (thisAmount != 0) {
                 _sendCollateral(_to, _tokens[i], thisAmount); // reverts if send fails
             }
@@ -173,15 +207,13 @@ contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
         }
 
         emit CollateralsSent(_tokens, _amounts, _to);
-        
-        return true;
     }
 
     // Returns true if all payments were successfully sent. Must be called by borrower operations, trove manager, or stability pool.
     // This function als ounwraps the collaterals and sends them to _to, if they are wrapped assets. If collect rewards is set to true,
     // It also harvests rewards on the user's behalf. 
     // _from is where the reward balance is, _to is where to send the tokens. 
-    function sendCollateralsUnwrap(address _from, address _to, address[] calldata _tokens, uint[] calldata _amounts) external override returns (bool) {
+    function sendCollateralsUnwrap(address _from, address _to, address[] calldata _tokens, uint[] calldata _amounts) external override {
         _requireCallerIsBOorTroveMorTMLorSP();
         uint256 tokensLen = _tokens.length;
         require(tokensLen == _amounts.length, "AP:Lengths");
@@ -193,18 +225,16 @@ contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
                 _sendCollateral(_to, _tokens[i], _amounts[i]); // reverts if send fails
             }
         }
-        return true;
     }
 
     // Function for sending single collateral. Currently only used by borrower operations unlever up functionality
-    function sendSingleCollateral(address _to, address _token, uint256 _amount) external override returns (bool) {
+    function sendSingleCollateral(address _to, address _token, uint256 _amount) external override {
         _requireCallerIsBorrowerOperations();
         _sendCollateral(_to, _token, _amount); // reverts if send fails
-        return true;
     }
 
     // Function for sending single collateral and unwrapping. Currently only used by borrower operations unlever up functionality
-    function sendSingleCollateralUnwrap(address _from, address _to, address _token, uint256 _amount) external override returns (bool) {
+    function sendSingleCollateralUnwrap(address _from, address _to, address _token, uint256 _amount) external override {
         _requireCallerIsBorrowerOperations();
         if (whitelist.isWrapped(_token)) {
             // Collects rewards automatically for that amount and unwraps for the original borrower. 
@@ -212,7 +242,6 @@ contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
         } else {
             _sendCollateral(_to, _token, _amount); // reverts if send fails
         }
-        return true;
     }
 
     // View function that returns if the contract transferring to needs to have its balances updated. 
@@ -282,7 +311,7 @@ contract ActivePool is Ownable, CheckContract, IActivePool, YetiCustomBase {
         }
     }
 
-    function _revertWrongFuncCaller() internal view {
+    function _revertWrongFuncCaller() internal pure {
         revert("AP: External caller not allowed");
     }
 

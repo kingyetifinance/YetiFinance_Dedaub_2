@@ -8,7 +8,7 @@ import '../Interfaces/IPriceFeed.sol';
 import '../Dependencies/LiquityMath.sol';
 
 /* Wrapper contract - used for calculating gas of read-only and internal functions.
-Not part of the Liquity application. */
+Not part of the Yeti application. */
 contract FunctionCaller {
 
     ITroveManager troveManager;

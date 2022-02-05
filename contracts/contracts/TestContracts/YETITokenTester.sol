@@ -18,7 +18,7 @@ contract YETITokenTester is YETIToken {
         _treasuryAddress,
         _teamAddress
     )
-    {} 
+    {}
 
     function unprotectedMint(address account, uint256 amount) external {
         // No check for the caller here

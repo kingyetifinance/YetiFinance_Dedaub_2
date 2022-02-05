@@ -13,6 +13,9 @@ import "./Dependencies/TroveManagerBase.sol";
 contract TroveManagerLiquidations is TroveManagerBase, ITroveManagerLiquidations {
     bytes32 constant public NAME = "TroveManagerRedemptions";
 
+    uint constant public _100pct = 1e18; // 1e18 == 100%
+
+    uint constant public PERCENT_DIVISOR = 200; // dividing by 200 yields 0.5%
 
     address internal borrowerOperationsAddress;
 
@@ -189,7 +192,7 @@ contract TroveManagerLiquidations is TroveManagerBase, ITroveManagerLiquidations
             totals.totalCollToRedistribute.tokens,
             totals.totalCollToRedistribute.amounts
         );
-        if (_CollsIsNonZero(totals.totalCollSurplus)) {
+        if (_collsIsNonZero(totals.totalCollSurplus)) {
             activePoolCached.sendCollaterals(
                 address(collSurplusPool),
                 totals.totalCollSurplus.tokens,
@@ -417,7 +420,7 @@ contract TroveManagerLiquidations is TroveManagerBase, ITroveManagerLiquidations
         singleLiquidation = _updateSingleLiquidation(or_vals, singleLiquidation);
         troveManager.closeTroveLiquidation(_borrower);
 
-        if (_CollsIsNonZero(singleLiquidation.collSurplus)) {
+        if (_collsIsNonZero(singleLiquidation.collSurplus)) {
             troveManager.collSurplusUpdate(
                 _borrower,
                 singleLiquidation.collSurplus.tokens,
@@ -619,7 +622,7 @@ contract TroveManagerLiquidations is TroveManagerBase, ITroveManagerLiquidations
             return zeroVals;
         }
 
-        if (_CollsIsNonZero(singleLiquidation.collSurplus)) {
+        if (_collsIsNonZero(singleLiquidation.collSurplus)) {
             troveManager.collSurplusUpdate(
                 _borrower,
                 singleLiquidation.collSurplus.tokens,
@@ -691,7 +694,7 @@ contract TroveManagerLiquidations is TroveManagerBase, ITroveManagerLiquidations
 
             // SPRatio: percentage of liquidated collateral that needs to be sent to SP in order to give SP depositors
             // $110 of collateral for every 100 YUSD they are using to liquidate.
-            uint256 SPRatio = or_vals.debtToOffset.mul(_100pct).mul(_110pct).div(toLiquidateCollValueUSD);
+            uint256 SPRatio = or_vals.debtToOffset.mul(_100pct).mul(MCR).div(toLiquidateCollValueUSD);
 
             // But SP ratio is capped at collOffsetRatio:
             SPRatio = LiquityMath._min(collOffsetRatio, SPRatio);
@@ -863,5 +866,18 @@ contract TroveManagerLiquidations is TroveManagerBase, ITroveManagerLiquidations
             amounts[i] = _coll.amounts[i] / PERCENT_DIVISOR;
         }
         return newColls(_coll.tokens, amounts);
+    }
+
+
+    // Check whether or not the system *would be* in Recovery Mode, given the entire system coll and debt.
+    // returns true if the system would be in recovery mode and false if not
+    function _checkPotentialRecoveryMode(uint _entireSystemColl, uint _entireSystemDebt)
+    internal
+    pure
+    returns (bool)
+    {
+        uint TCR = LiquityMath._computeCR(_entireSystemColl, _entireSystemDebt);
+
+        return TCR < CCR;
     }
 }

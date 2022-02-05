@@ -7,16 +7,18 @@ import "./Interfaces/IWhitelist.sol";
 import "./Dependencies/SafeMath.sol";
 import "./Dependencies/Ownable.sol";
 import "./Dependencies/CheckContract.sol";
-import "./Dependencies/LiquityBase.sol";
+import "./Dependencies/PoolBase.sol";
 import "./Interfaces/IWAsset.sol";
+import "./Dependencies/SafeERC20.sol";
 
 
 /**
  * The CollSurplusPool holds all the bonus collateral that occurs from liquidations and
  * redemptions, to be claimed by the trove owner.ß
  */
-contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBase {
+contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, PoolBase {
     using SafeMath for uint256;
+    using SafeERC20 for IERC20;
 
     string public constant NAME = "CollSurplusPool";
 
@@ -123,7 +125,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         uint256[] memory _amounts
     ) external override {
         _requireCallerIsTroveManager();
-        balances[_account] = _sumColls(balances[_account], _tokens, _amounts);
+        balances[_account] = _sumColls(balances[_account], newColls(_tokens, _amounts));
         emit CollBalanceUpdated(_account);
     }
 
@@ -133,7 +135,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         _requireCallerIsBorrowerOperations();
 
         newColls memory claimableColl = balances[_account];
-        require(_CollsIsNonZero(claimableColl), "CSP: No collateral available");
+        require(_collsIsNonZero(claimableColl), "CSP: No collateral available");
 
         balances[_account].amounts = new uint256[](poolColl.tokens.length); // sets balance of account to 0
         emit CollBalanceUpdated(_account);
@@ -141,8 +143,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         poolColl.amounts = _leftSubColls(poolColl, claimableColl.tokens, claimableColl.amounts);
         emit CollateralSent(_account);
 
-        bool success = _sendColl(_account, claimableColl);
-        require(success, "CSP: sending Collateral failed");
+        _sendColl(_account, claimableColl);
     }
 
     // --- 'require' functions ---
@@ -173,7 +174,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
         }
     }
 
-    function _revertWrongFuncCaller() internal view{
+    function _revertWrongFuncCaller() internal pure {
         revert("CSP: External caller not allowed");
     }
 
@@ -194,7 +195,7 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
 
     // Function to send collateral out to an address, and checks if the asset is wrapped so that it can 
     // unwrap in that case. 
-    function _sendColl(address _to, newColls memory _colls) internal returns (bool) {
+    function _sendColl(address _to, newColls memory _colls) internal {
         uint256 tokensLen = _colls.tokens.length;
         for (uint256 i; i < tokensLen; ++i) {
             address token = _colls.tokens[i];
@@ -204,11 +205,8 @@ contract CollSurplusPool is Ownable, CheckContract, ICollSurplusPool, LiquityBas
                 IWAsset(token).unwrapFor(_to, _to, _colls.amounts[i]);
             } else {
                 // Otherwise transfer like normal ERC20
-                if (!IERC20(token).transfer(_to, _colls.amounts[i])) {
-                    return false;
-                }
+                IERC20(token).safeTransfer(_to, _colls.amounts[i]);
             }
         }
-        return true;
     }
 }

@@ -20,7 +20,9 @@ interface IPool is ICollateralReceiver {
 
     // --- Functions ---
 
-    function getVC() external view returns (uint);
+    function getVC() external view returns (uint totalVC);
+
+    function getVCforTCR() external view returns (uint totalVC, uint totalVCforTCR);
 
     function getCollateral(address collateralAddress) external view returns (uint);
 

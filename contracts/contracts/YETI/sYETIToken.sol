@@ -151,7 +151,7 @@ contract sYETIToken is IERC20, Domain, BoringOwnable {
     /// @param amount The maximum collective amount that `spender` can draw.
     /// @return (bool) Returns True if approved.
     function increaseAllowance(address spender, uint256 amount) public override returns (bool) {
-        allowance[msg.sender][spender] += amount;
+        allowance[msg.sender][spender] = allowance[msg.sender][spender].add(amount);
         emit Approval(msg.sender, spender, amount);
         return true;
     }

@@ -71,6 +71,8 @@ interface ITroveManager is ILiquityBase {
 
     function getCurrentICR(address _borrower) external view returns (uint);
 
+    function getCurrentRICR(address _borrower) external view returns (uint);
+
     function liquidate(address _borrower) external;
 
     function batchLiquidateTroves(address[] calldata _troveArray, address _liquidator) external;

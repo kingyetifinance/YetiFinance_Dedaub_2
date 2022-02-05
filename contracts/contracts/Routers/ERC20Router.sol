@@ -6,24 +6,24 @@ import "../Interfaces/IYetiRouter.sol";
 import "../Interfaces/IERC20.sol";
 import "../Dependencies/SafeMath.sol";
 import "../YUSDToken.sol";
+import "../Dependencies/SafeERC20.sol";
 
 // ERC20 router contract to be used for routing YUSD -> ERC20 and then wrapping.
 // simple router using TJ router. 
 contract ERC20Router is IYetiRouter {
     using SafeMath for uint256;
+    using SafeERC20 for IERC20;
 
-    address internal activePoolAddress;
-    address internal traderJoeRouter;
-    address internal yusdTokenAddress;
-    string public name;
+    address immutable internal activePoolAddress;
+    address immutable internal traderJoeRouter;
+    address immutable internal yusdTokenAddress;
+    string constant name = "YUSDRouter";
 
     constructor(
-        string memory _name,
         address _activePoolAddress,
         address _traderJoeRouter, 
         address _yusdTokenAddress
     ) public {
-        name = _name;
         activePoolAddress = _activePoolAddress;
         traderJoeRouter = _traderJoeRouter;
         yusdTokenAddress = _yusdTokenAddress;
@@ -37,7 +37,7 @@ contract ERC20Router is IYetiRouter {
         address _endingTokenAddress,
         uint256 _amount,
         uint256 _minSwapAmount
-    ) public override returns (uint256) {
+    ) external override returns (uint256) {
         require(
             _startingTokenAddress == yusdTokenAddress,
             "Cannot route from a token other than YUSD"
@@ -45,8 +45,7 @@ contract ERC20Router is IYetiRouter {
         address[] memory path = new address[](2);
         path[0] = yusdTokenAddress;
         path[1] = _endingTokenAddress;
-        IERC20(yusdTokenAddress).transferFrom(_fromUser, address(this), _amount);
-        IERC20(yusdTokenAddress).approve(traderJoeRouter, _amount);
+        IERC20(yusdTokenAddress).safeApprove(traderJoeRouter, _amount);
         uint256[] memory amounts = IRouter(traderJoeRouter).swapExactTokensForTokens(
             _amount,
             1,
@@ -63,7 +62,7 @@ contract ERC20Router is IYetiRouter {
     }
 
     function unRoute(
-        address _fromUser,
+        address _targetUser,
         address _startingTokenAddress,
         address _endingTokenAddress,
         uint256 _amount,
@@ -76,13 +75,12 @@ contract ERC20Router is IYetiRouter {
         address[] memory path = new address[](2);
         path[0] = _startingTokenAddress;
         path[1] = yusdTokenAddress;
-        IERC20(_startingTokenAddress).transferFrom(_fromUser, address(this), _amount);
-        IERC20(_startingTokenAddress).approve(traderJoeRouter, _amount);
+        IERC20(_startingTokenAddress).safeApprove(traderJoeRouter, _amount);
         uint256[] memory amounts = IRouter(traderJoeRouter).swapExactTokensForTokens(
             _amount,
             1,
             path,
-            _fromUser,
+            _targetUser,
             block.timestamp
         );
         require(

@@ -443,7 +443,7 @@ contract SortedTroves is Ownable, CheckContract, ISortedTroves {
         }
     }
 
-    function _revertWrongFuncCaller() internal view{
+    function _revertWrongFuncCaller() internal pure {
         revert("ST: External caller not allowed");
     }
 }

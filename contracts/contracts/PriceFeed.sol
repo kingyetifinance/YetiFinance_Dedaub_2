@@ -38,7 +38,7 @@ contract PriceFeed is Ownable, CheckContract, BaseMath, IPriceFeed {
     uint constant public MAX_PRICE_DEVIATION_FROM_PREVIOUS_ROUND =  5e17; // 50%
 
 
-    // The last good price seen from an oracle by Liquity
+    // The last good price seen from an oracle by Yeti
     uint public lastGoodPrice;
 
     struct ChainlinkResponse {
@@ -75,11 +75,11 @@ contract PriceFeed is Ownable, CheckContract, BaseMath, IPriceFeed {
 
     /*
     * fetchPrice():
-    * Returns the latest price obtained from the Oracle. Called by Liquity functions that require a current price.
+    * Returns the latest price obtained from the Oracle. Called by Yeti functions that require a current price.
     *
     * Also callable by anyone externally.
     *
-    * Non-view function - it stores the last good price seen by Liquity.
+    * Non-view function - it stores the last good price seen by Yeti.
     *
     * Uses a Chainlink Oracle and checks it isn't broken or frozen.
     * If the Chainlink Oracle is broken or frozen, then returns the last good price seen
@@ -103,11 +103,11 @@ contract PriceFeed is Ownable, CheckContract, BaseMath, IPriceFeed {
 
     /*
     * fetchPrice_v():
-    * Returns the latest price obtained from the Oracle. Called by Liquity functions that require a current price.
+    * Returns the latest price obtained from the Oracle. Called by Yeti functions that require a current price.
     *
     * Also callable by anyone externally.
     *
-    * Non-view function - it stores the last good price seen by Liquity.
+    * Non-view function - it stores the last good price seen by Yeti.
     *
     * Uses a Chainlink Oracle and checks it isn't broken or frozen.
     * If the Chainlink Oracle is broken or frozen, then returns the last good price seen
@@ -177,18 +177,18 @@ contract PriceFeed is Ownable, CheckContract, BaseMath, IPriceFeed {
 
     function _scaleChainlinkPriceByDigits(uint _price, uint _answerDigits) internal pure returns (uint) {
         /*
-        * Convert the price returned by the Chainlink oracle to an 18-digit decimal for use by Liquity.
-        * At date of Liquity launch, Chainlink uses an 8-digit price, but we also handle the possibility of
+        * Convert the price returned by the Chainlink oracle to an 18-digit decimal for use by Yeti.
+        * At date of Yeti launch, Chainlink uses an 8-digit price, but we also handle the possibility of
         * future changes.
         *
         */
         uint price;
         if (_answerDigits >= TARGET_DIGITS) {
-            // Scale the returned price value down to Liquity's target precision
+            // Scale the returned price value down to Yeti's target precision
             price = _price.div(10 ** (_answerDigits - TARGET_DIGITS));
         }
         else if (_answerDigits < TARGET_DIGITS) {
-            // Scale the returned price value up to Liquity's target precision
+            // Scale the returned price value up to Yeti's target precision
             price = _price.mul(10 ** (TARGET_DIGITS - _answerDigits));
         }
         return price;

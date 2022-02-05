@@ -2,6 +2,7 @@
 
 pragma solidity 0.6.11;
 
+import "../Timelock.sol";
 import "../TroveManager.sol";
 import "../BorrowerOperations.sol";
 import "../ActivePool.sol";
@@ -44,6 +45,8 @@ contract EchidnaTester {
     PriceFeedTestnet priceFeedTestnet;
     SortedTroves sortedTroves;
     Whitelist whitelist;
+    Timelock timelock;
+
 
     EchidnaProxy[NUMBER_OF_ACTORS] public echidnaProxies;
 
@@ -58,12 +61,14 @@ contract EchidnaTester {
         gasPool = new GasPool();
         troveManagerLiquidations = new TroveManagerLiquidations();
         troveManagerRedemptions = new TroveManagerRedemptions();
+        timelock = new Timelock(address(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266), 2592000, 604800);
         yusdToken = new YUSDToken(
             address(troveManager),
             address(troveManagerLiquidations),
             address(troveManagerRedemptions),
             address(stabilityPool),
-            address(borrowerOperations)
+            address(borrowerOperations),
+            address(timelock)
         );
         whitelist = new Whitelist();
 
